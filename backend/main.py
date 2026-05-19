@@ -1,20 +1,57 @@
+import time
+import json
+from uuid import uuid4
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
 from schemas import StudentProfile, ChatRequest
 from services.classifier import ClassifierService
-from fastapi.responses import StreamingResponse
 from services.demand import DemandService
 from services.skill_matcher import SkillMatcherService
 from services.course_finder import CourseFinderService
 from services.llm import LLMService
-import asyncio
 from top_profession import get_top_profession
-from uuid import uuid4
 from roadmap import generate_roadmap
 
-session_store: dict[str, str] = {}
+class SessionStore:
+    def __init__(self, ttl_seconds: int = 86400):
+        self.store = {}
+        self.ttl = ttl_seconds
 
-app = FastAPI(title='IT Career Advisor API')
+    def set(self, session_id: str, context: str):
+        self.store[session_id] = (context, time.time() + self.ttl)
+
+    def get(self, session_id: str) -> str:
+        now = time.time()
+
+        expired = [k for k, (v, exp) in self.store.items() if now > exp]
+        for k in expired:
+            del self.store[k]
+            
+        data = self.store.get(session_id)
+        return data[0] if data and data[1] > now else "No context available."
+
+sessions = SessionStore()
+ml_models = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Loading ML models and services into memory...")
+    ml_models['classifier'] = ClassifierService()
+    ml_models['demand'] = DemandService()
+    ml_models['skill_matcher'] = SkillMatcherService()
+    ml_models['course_finder'] = CourseFinderService()
+    ml_models['llm'] = LLMService()
+    print("All models loaded successfully.")
+    
+    yield
+    
+    print("Shutting down server, clearing model memory...")
+    ml_models.clear()
+
+app = FastAPI(title='IT Career Advisor API', lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,61 +60,48 @@ app.add_middleware(
     allow_headers=['*'],
 )
 
-classifier    = ClassifierService()
-demand        = DemandService()
-skill_matcher = SkillMatcherService()
-course_finder = CourseFinderService()
-llm           = LLMService()
-
-
 @app.get('/health')
 def health():
     return {'status': 'ok'}
 
-
 @app.post('/recommend')
 def recommend(profile: StudentProfile):
     try:
-        # 1. Skill Matcher
-        skill_scores = skill_matcher.get_scores(profile.skills)
+        skill_scores = ml_models['skill_matcher'].get_scores(profile.skills)
 
-        # 2. Classifier 
         profile_dict = profile.dict(exclude={'skills'})
-        classification_scores = classifier.get_scores(profile_dict)
+        classification_scores = ml_models['classifier'].get_scores(profile_dict)
 
-        # 3. Demand
-        demand_scores = demand.get_scores()
+        demand_scores = ml_models['demand'].get_scores()
 
-        # 4. Weighted scoring to get top profession + alternative
         top_profession, final_scores, top_2 = get_top_profession(
             classification_scores=classification_scores,
             demand_scores=demand_scores,
             skill_scores=skill_scores
         )
 
-        # 5. Personalized roadmap + courses
-        roadmap_with_courses, full_roadmap = course_finder.get_roadmap_with_courses(
+        roadmap_with_courses, full_roadmap = ml_models['course_finder'].get_roadmap_with_courses(
             profession=top_profession,
             student_skills=profile.skills,
             lang=profile.lang,
         )
 
-        # 6. LLM Context Building
-        context = llm.build_context(
+        context = ml_models['llm'].build_context(
             skills=profile.skills,
             skill_scores=skill_scores,
             classification_scores=classification_scores,
             demand_scores=demand_scores,
             roadmap_with_courses=roadmap_with_courses,
         )
+        
         session_id = str(uuid4())
-        session_store[session_id] = context
+        sessions.set(session_id, context)
 
         return {
             'top_profession':        top_profession,
             'session_id':            session_id,
             'alternative_profession': top_2[1],  
-            'final_scores':         final_scores,
+            'final_scores':          final_scores,
             'skill_scores':          skill_scores,
             'classification_scores': classification_scores,
             'demand_scores':         demand_scores,
@@ -89,13 +113,11 @@ def recommend(profile: StudentProfile):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post('/chat')
 def chat(request: ChatRequest):
-    '''Generate a response from the LLM based on the provided context, conversation history, and user message.'''
-    context = session_store.get(request.session_id, "No context available.")
+    context = sessions.get(request.session_id)
     try:
-        response = llm.chat(
+        response = ml_models['llm'].chat(
             context=context,
             history=request.history,
             message=request.message,
@@ -105,41 +127,22 @@ def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/chat/stream')
-async def chat_stream(request: ChatRequest):
-    '''Generate a streaming response from the LLM, yielding chunks of text as they are generated. If `deep` is True, include the model's thoughts in the stream.'''
-    context = session_store.get(request.session_id, "No context available.")
+def chat_stream(request: ChatRequest):
+    context = sessions.get(request.session_id)
 
-    async def generate():
+    def generate():
         try:
-            loop = asyncio.get_event_loop()
-            queue = asyncio.Queue()
-
-            def run_stream():
-                try:
-                    for chunk in llm.chat_stream(
-                        context=context,
-                        history=request.history,
-                        message=request.message,
-                        deep=request.deep
-                    ):
-                        loop.call_soon_threadsafe(queue.put_nowait, chunk)
-                except Exception as e:
-                    loop.call_soon_threadsafe(queue.put_nowait, f"__ERROR__: {e}")
-                finally:
-                    loop.call_soon_threadsafe(queue.put_nowait, None)
-
-            loop.run_in_executor(None, run_stream)
-
-            while True:
-                chunk = await queue.get()
-                if chunk is None:
-                    yield "data: [DONE]\n\n"
-                    break
-                yield f"data: {chunk}\n\n"
-                await asyncio.sleep(0)
-
+            for chunk in ml_models['llm'].chat_stream(
+                context=context,
+                history=request.history,
+                message=request.message,
+                deep=request.deep
+            ):
+                yield chunk
+                
         except Exception as e:
-            yield f"data: Error: {str(e)}\n\n"
+            error_data = {"type": "text", "content": f"Streaming error: {str(e)}"}
+            yield f"data: {json.dumps(error_data)}\n\n"
 
     return StreamingResponse(
         generate(),
