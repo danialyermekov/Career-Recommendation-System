@@ -56,7 +56,7 @@ class CourseFinderService:
         conditions = [mask_level_1, mask_level_2, mask_level_3]
         df['match_level'] = np.select(conditions, [1, 2, 3], default=4)
 
-        df['fair_score'] = df['rating'] * np.log1p(df['number_of_reviews'])
+        df['fair_score'] = df['rating'] * (1+ np.log1p(1+df['number_of_reviews']))
 
 
         df = df.sort_values(
@@ -123,7 +123,7 @@ class CourseFinderService:
                 default=4
             )
 
-            df['fair_score'] = df['rating'] * np.log1p(df['number_of_reviews'])
+            df['fair_score'] = df['rating'] * (1+ np.log1p(1+df['number_of_reviews']))
 
             df = df.sort_values(by=['match_level', 'fair_score'], ascending=[True, False])
             df = df.drop_duplicates(subset=['title'], keep='first')
