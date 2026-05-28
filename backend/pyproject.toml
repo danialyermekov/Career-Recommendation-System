@@ -38,6 +38,7 @@ asyncio_default_fixture_loop_scope = "function"
 [tool.setuptools]
 py-modules = [
     "config",
+    "database",
     "features",
     "main",
     "roadmap",

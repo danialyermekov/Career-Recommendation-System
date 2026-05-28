@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+backend/data/*.sqlite3
+frontend/build/
+backend/dev-server.*.log
+frontend/dev-server.*.log

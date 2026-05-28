@@ -56,6 +56,21 @@ export async function sendChatStream(payload, signal) {
   return res;
 }
 
+export async function transcribeVoice(audioBlob, lang) {
+  const res = await fetch(`${BASE}/voice/transcribe?lang=${encodeURIComponent(lang || 'en')}`, {
+    method: 'POST',
+    headers: { 'Content-Type': audioBlob.type || 'audio/wav' },
+    body: audioBlob,
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `API error: ${res.status}`)
+  }
+
+  return res.json()
+}
+
 export async function parseResume(file) {
   const res = await fetch(`${BASE}/parse-resume`, {
     method: 'POST',
@@ -69,5 +84,43 @@ export async function parseResume(file) {
     const text = await res.text()
     throw new Error(text || `API error: ${res.status}`)
   }
+  return res.json()
+}
+
+export async function getRecommendationHistory() {
+  const res = await fetch(`${BASE}/recommendation/history`)
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+export async function clearRecommendationHistory() {
+  const res = await fetch(`${BASE}/recommendation/history`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+export async function getRecommendationState(sessionId) {
+  const res = await fetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/state`)
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveRoadmapProgress(sessionId, progress) {
+  const res = await fetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/progress`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(progress),
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveCourseFilterPreferences(sessionId, filters) {
+  const res = await fetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/course-filters`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filters }),
+  })
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }

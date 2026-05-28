@@ -26,9 +26,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/ /app/backend/
-RUN pip install --upgrade pip \
-    setuptools wheel \
-    && pip install --no-build-isolation /app/backend
+RUN python -m pip install --upgrade --retries 10 --timeout 180 pip setuptools wheel \
+    && python -m pip install --retries 10 --timeout 180 --prefer-binary --no-build-isolation /app/backend
 
 COPY --from=frontend-builder /app/frontend/build /app/frontend/build
 

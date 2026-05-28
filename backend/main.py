@@ -4,10 +4,20 @@ from urllib.parse import unquote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from schemas import StudentProfile, ChatRequest
+from schemas import StudentProfile, ChatRequest, RoadmapProgressRequest, CourseFilterPreferencesRequest
 import asyncio
 from top_profession import get_top_profession
 from uuid import uuid4
+from database import (
+    DEMO_USER_ID,
+    delete_recommendation_history,
+    get_recommendation_state,
+    init_db,
+    list_recommendation_history,
+    save_course_filter_preferences,
+    save_recommendation_session,
+    update_recommendation_progress,
+)
 
 session_store: dict[str, str] = {}
 FRONTEND_BUILD_DIR = (Path(__file__).resolve().parent.parent / 'frontend' / 'build').resolve()
@@ -46,6 +56,7 @@ OFF_TOPIC_RESPONSES = {
 }
 
 app = FastAPI(title='IT Career Advisor API')
+init_db()
 
 app.add_middleware(
     CORSMiddleware,
@@ -178,6 +189,14 @@ def recommend(profile: StudentProfile):
         # 2. Classifier 
         profile_dict = profile.model_dump(exclude={'skills'})
         classification_scores = classifier_service.get_scores(profile_dict)
+        skill_explanations = (
+            classifier_service.get_skill_explanations(
+                profile=profile_dict,
+                student_skills=profile.skills,
+            )
+            if hasattr(classifier_service, "get_skill_explanations")
+            else {}
+        )
 
         # 3. Demand
         demand_scores = demand_service.get_scores()
@@ -212,7 +231,7 @@ def recommend(profile: StudentProfile):
         session_id = str(uuid4())
         session_store[session_id] = context
 
-        return {
+        response_payload = {
             'top_profession':        top_profession,
             'session_id':            session_id,
             'alternative_profession': top_2[1],  
@@ -220,14 +239,72 @@ def recommend(profile: StudentProfile):
             'skill_scores':          skill_scores,
             'classification_scores': classification_scores,
             'demand_scores':         demand_scores,
+            'skill_explanations':    skill_explanations,
             'roadmap_with_courses':  roadmap_with_courses,
             'full_roadmap':          full_roadmap,
             'roadmaps_by_profession': roadmaps_by_profession,
             'context':               context,
         }
 
+        save_recommendation_session(
+            session_id=session_id,
+            user_id=DEMO_USER_ID,
+            profile=profile.model_dump(),
+            result_payload=response_payload,
+            context=context,
+            roadmaps_by_profession=roadmaps_by_profession,
+            roadmap_with_courses=roadmap_with_courses,
+        )
+
+        return response_payload
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get('/recommendation/history')
+def recommendation_history(user_id: str = DEMO_USER_ID, limit: int = 12):
+    return {'items': list_recommendation_history(user_id=user_id, limit=limit)}
+
+
+@app.delete('/recommendation/history')
+def clear_recommendation_history(user_id: str = DEMO_USER_ID):
+    return delete_recommendation_history(user_id=user_id)
+
+
+@app.get('/recommendation/{session_id}/state')
+def recommendation_state(session_id: str, user_id: str = DEMO_USER_ID):
+    state = get_recommendation_state(session_id=session_id, user_id=user_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail='Recommendation session not found.')
+    return state
+
+
+@app.put('/recommendation/{session_id}/progress')
+def save_roadmap_progress(session_id: str, request: RoadmapProgressRequest, user_id: str = DEMO_USER_ID):
+    saved = update_recommendation_progress(
+        session_id=session_id,
+        user_id=user_id,
+        done_skills=request.doneSkills,
+        category_order=request.categoryOrder,
+        skill_orders=request.skillOrders,
+        selected_profession=request.selectedProfession,
+    )
+    if not saved.get('saved'):
+        raise HTTPException(status_code=404, detail='Recommendation session not found.')
+    return saved
+
+
+@app.put('/recommendation/{session_id}/course-filters')
+def save_course_filters(session_id: str, request: CourseFilterPreferencesRequest):
+    saved = save_course_filter_preferences(
+        session_id=session_id,
+        user_id=request.user_id or DEMO_USER_ID,
+        filters=request.filters,
+    )
+    if not saved.get('saved'):
+        raise HTTPException(status_code=404, detail='Recommendation session not found.')
+    return saved
 
 
 @app.post('/chat')
@@ -249,6 +326,22 @@ def chat(request: ChatRequest):
         if is_llm_not_configured_error(e):
             raise HTTPException(status_code=503, detail=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post('/voice/transcribe')
+async def transcribe_voice(request: Request, lang: str = 'en'):
+    content = await request.body()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty audio.")
+
+    mime_type = request.headers.get("content-type", "audio/wav").split(";")[0] or "audio/wav"
+    try:
+        text = get_llm().transcribe_audio(content, mime_type=mime_type, lang=lang)
+        return {"text": text}
+    except Exception as e:
+        if is_llm_not_configured_error(e):
+            raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Could not transcribe voice input: {e}")
 
 @app.post('/chat/stream')
 async def chat_stream(request: ChatRequest):

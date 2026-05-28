@@ -36,12 +36,25 @@
   gap: 8px;
   min-height: 42px;
   padding: 0 15px;
-  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
   border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--accent-contrast);
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+  color: color-mix(in srgb, var(--accent) 88%, var(--text));
   font-weight: 800;
-  box-shadow: var(--shadow-md);
+  box-shadow: none;
+  opacity: .46;
+  backdrop-filter: blur(14px);
+  transform: translateX(calc(100% - 46px));
+  transition: opacity .18s ease, transform .2s cubic-bezier(.16,1,.3,1),
+              background .18s ease, border-color .18s ease;
+}
+
+.aiFab:hover,
+.aiFab:focus-visible {
+  opacity: .96;
+  transform: translateX(0);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
 }
 
 /* ─── Shared sidebar base ────────────────────────────────────── */
@@ -412,7 +425,9 @@
 .radarCompare,
 .gapCompare,
 .explainCard,
-.dependencyPanel {
+.dependencyPanel,
+.courseFilterPanel,
+.recommendedCoursesPanel {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--panel);
@@ -737,6 +752,129 @@
   line-height: 1.55;
 }
 
+.skillExplainBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.skillExplainHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.skillExplainHeader div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.skillExplainHeader strong {
+  color: var(--text);
+  font-size: .82rem;
+}
+
+.skillExplainHeader span {
+  color: var(--text-3);
+  font-size: .68rem;
+  font-family: var(--font-mono);
+}
+
+.infoPill {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  color: var(--accent);
+  padding: 3px 9px;
+  font-size: .66rem;
+  font-family: var(--font-mono);
+  font-weight: 800;
+}
+
+.skillImpactChart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skillImpactRow {
+  display: grid;
+  grid-template-columns: minmax(92px, 150px) minmax(120px, 1fr) 48px;
+  align-items: center;
+  gap: 10px;
+}
+
+.skillImpactName {
+  color: var(--text);
+  font-size: .76rem;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skillImpactTrack {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.skillImpactTrack i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.skillImpactPositive { background: #4caf82; }
+.skillImpactNegative { background: #d96b6b; }
+
+.skillImpactValue {
+  color: var(--text-3);
+  font-size: .7rem;
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.skillImpactLists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.skillImpactLists div {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.skillImpactLists strong {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text);
+  font-size: .75rem;
+}
+
+.skillImpactLists p {
+  color: var(--text-2);
+  font-size: .72rem;
+  line-height: 1.5;
+  margin-bottom: 5px;
+}
+
+.recommendedCoursesPanel {
+  margin-top: 16px;
+}
+
 /* ─── Top badge ──────────────────────────────────────────────── */
 .topBadge {
   font-size: .7rem;
@@ -879,6 +1017,59 @@
 .dependencyPanel {
   margin-bottom: 16px;
 }
+.courseFilterPanel {
+  margin-bottom: 16px;
+}
+.courseFilterGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.courseFilterGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.courseFilterGrid label span {
+  color: var(--text-3);
+  font-size: .68rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+.courseFilterGrid select {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  padding: 6px 9px;
+  font-size: .78rem;
+  outline: none;
+}
+.courseFilterGrid select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+.activeFilters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.activeFilters button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  color: var(--text-2);
+  padding: 4px 9px;
+  font-size: .68rem;
+  font-family: var(--font-mono);
+}
+.activeFilters .resetFilters {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+}
 .dependencyTree {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -1001,6 +1192,38 @@
   font-size: .72rem;
 }
 
+.courseEmptyState {
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-size: .8rem;
+  background: var(--bg-secondary);
+}
+
+.courseCardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.courseGridItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.courseSkillTag {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: .66rem;
+  font-family: var(--font-mono);
+}
+
 .courseWrap { position: relative; display: flex; align-items: stretch; }
 .courseWrap .course { flex: 1; border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 
@@ -1022,6 +1245,7 @@
 .courseMeta      { display: flex; align-items: center; gap: 10px; margin-top: 2px; flex-wrap: wrap; }
 .courseRating    { font-size: .75rem; color: var(--warning); font-family: var(--font-mono); flex-shrink: 0; }
 .courseReviews   { font-size: .7rem; color: var(--text-3); letter-spacing: .01em; }
+.coursePrice     { font-size: .7rem; color: var(--success); font-family: var(--font-mono); font-weight: 800; }
 
 .courseCopyBtn {
   display: flex;
@@ -1577,6 +1801,20 @@
     width: 100%;
   }
 
+  .skillImpactRow {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .skillImpactValue {
+    text-align: left;
+  }
+
+  .courseFilterGrid,
+  .courseCardGrid {
+    grid-template-columns: 1fr;
+  }
+
   .radarCompareBody svg {
     width: min(100%, 330px);
     height: auto;
@@ -1650,6 +1888,22 @@
 
   .modalBox {
     padding: 16px;
+  }
+
+  .aiFab {
+    right: 10px;
+    bottom: 12px;
+    min-height: 38px;
+    max-width: 44px;
+    overflow: hidden;
+    padding: 0 12px;
+    opacity: .5;
+    transform: none;
+  }
+
+  .aiFab:hover,
+  .aiFab:focus-visible {
+    max-width: min(260px, calc(100vw - 20px));
   }
 }
 

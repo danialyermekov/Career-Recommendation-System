@@ -1,6 +1,6 @@
 # Career Recommendation System
 
-> Full-stack AI career guidance system for students. The app recommends IT career tracks, compares all supported professions, explains scoring factors, builds a learning roadmap, parses CV/resume PDFs, exports a structured PDF report, and includes an optional grounded AI advisor.
+Full-stack AI career guidance system for students. The application recommends IT career tracks, compares all supported professions, explains recommendation factors down to individual skills, builds a personalized learning roadmap with filtered course recommendations, stores user progress in SQLite, parses resumes, exports a PDF report, and includes an optional AI advisor.
 
 ## Authors
 
@@ -8,23 +8,24 @@
 | --- | --- |
 | Danial Yermekov | https://github.com/danialyermekov |
 | Nurbek Seiilbek | https://github.com/Nurbek399 |
-| Turan Tastan | Not provided |
+| Turan Tastan | https://github.com/another-restless-student23 |
 
-## Overview
+## What The System Does
 
-Career Recommendation System is a diploma project for helping students choose an educational and career trajectory in IT. It combines:
+The system helps students choose an IT career direction by combining:
 
-- student profile classification;
-- explicit skill matching;
-- labor-market demand forecasting;
-- multi-profession score comparison;
+- student profile classification with a CatBoost classifier;
+- skill matching against profession profiles;
+- labor-market demand and trend scoring;
+- weighted final scoring across all supported professions;
 - skill-gap analysis;
-- course-based learning roadmaps;
-- resume/CV parsing;
-- explainable recommendation output;
-- optional AI advisor chat grounded in the generated results.
+- personalized roadmaps with course recommendations;
+- advanced course filtering by certificate, price, language, platform, and level;
+- skill-level explainability with SHAP or fallback feature-importance logic;
+- persistent recommendation history and roadmap progress in SQLite;
+- optional Gemini-powered AI advisor chat.
 
-The system is not limited to a single top recommendation. It returns and visualizes scores for all supported professions so students can compare alternatives and understand why one path is stronger than another.
+The app does not only return a single top profession. It shows all supported career tracks and lets the student compare scores, skill gaps, market signals, and roadmap requirements.
 
 ## Supported Career Tracks
 
@@ -38,106 +39,9 @@ The system is not limited to a single top recommendation. It returns and visuali
 
 ## Main Features
 
-### Recommendation Engine
+### Recommendation Pipeline
 
-- Weighted final score across all professions.
-- Profile match from a CatBoost classifier.
-- Skill match from TF-IDF profession profiles and cosine similarity.
-- Market demand and trend score from LightGBM forecasting.
-- Alternative profession ranking, not only top-1.
-- Explainability panel with factor impact for:
-  - profile match;
-  - skill matching;
-  - market demand;
-  - trend score.
-
-### Visual Analytics
-
-- Bars chart for all professions.
-- Multi-profession radar chart.
-- Skill-gap comparison for every profession.
-- Score circles for every profession.
-- Hover tooltips with profession name, exact score, and factor breakdown.
-- Responsive layouts for desktop, tablet, and mobile.
-
-### Learning Roadmap
-
-- Personalized roadmap for the recommended profession.
-- Course recommendations from a combined course catalog.
-- Drag and drop ordering for roadmap categories and skill tasks.
-- Completed tasks move into a completed section.
-- Realtime progress counter.
-- Skill dependency tree with prerequisites and recommended next step.
-- Roadmap progress saved locally in the browser.
-
-### AI Advisor
-
-- Optional Gemini-powered advisor chat.
-- Streaming responses.
-- Thinking mode UI.
-- Voice input and answer playback through browser speech APIs when supported.
-- Resizable side panel with overlay, close button, outside click, and Esc support.
-- Topic filtering and prompt-injection guardrails. The assistant is scoped to career recommendations, skill gaps, roadmaps, professions, courses, resumes, and system results.
-
-### Resume / CV Parser
-
-- Upload text-based PDF, TXT, or document-like CV files.
-- Backend PDF extraction via PyMuPDF.
-- Extracts skills, technologies, and possible current role.
-- Detected skills are inserted into the profile form for manual review.
-- Short-token false positives are filtered, so words like "go" and isolated "R" are not treated as Go/R skills unless the context is explicit.
-
-Note: scanned image-only PDFs require OCR and are not fully supported by the current parser.
-
-### Localization
-
-The frontend supports three interface languages:
-
-- English
-- Russian
-- Kazakh
-
-Translated areas include the main UI, profession names, chart labels, roadmap UI, AI advisor texts, and PDF report labels.
-
-### PDF Report
-
-The generated PDF report includes:
-
-- summary of all professions;
-- score circles;
-- bars overview;
-- score breakdown;
-- recommendation explanation;
-- skill-gap summary;
-- roadmap;
-- roadmap progress when available.
-
-## System Architecture
-
-```text
-Student profile / uploaded resume
-        |
-        v
-FastAPI backend
-        |
-        |-- CatBoost classifier -> profile-fit probabilities
-        |-- TF-IDF skill matcher -> profession skill similarity
-        |-- LightGBM demand model -> trend and market-share scores
-        |-- Roadmap engine -> skill gaps and course recommendations
-        |-- PyMuPDF resume parser -> extracted skills and role
-        |-- Gemini LLM service -> optional grounded AI advisor
-        |
-        v
-React frontend
-        |
-        |-- profile form
-        |-- all-profession charts
-        |-- roadmap and dependency tree
-        |-- AI advisor side panel
-        |-- PDF export
-```
-
-## Scoring Formula
+The final recommendation score combines four signals:
 
 ```text
 Final score =
@@ -147,11 +51,189 @@ Final score =
 + 0.05 * demand market-share score
 ```
 
+Backend services:
+
+- `ClassifierService`: CatBoost model for profile-fit probabilities.
+- `SkillMatcherService`: TF-IDF profession vectors and cosine similarity.
+- `DemandService`: LightGBM-based demand and vacancy trend scoring.
+- `CourseFinderService`: roadmap course lookup from the course catalog.
+- `LLMService`: optional Gemini chat, streaming, and voice transcription.
+
+### Course Filtering
+
+The course catalog now uses:
+
+```text
+backend/data/all_courses.csv
+```
+
+The dataset includes course metadata such as:
+
+- `platform`
+- `difficulty`
+- `certificate`
+- `price`
+- `rating`
+- `number_of_reviews`
+- `course_url`
+
+The frontend provides filters for:
+
+- certificate: with certificate, without certificate, all;
+- price: free, paid, all;
+- language: English, Russian, Kazakh, other available languages;
+- platform: Coursera, Udemy, edX, Stepik, and other available platforms;
+- level: Beginner, Intermediate, Advanced, Mixed, all.
+
+Filters work together and update course lists without page reload. The same filtering logic is used in the recommended courses block and inside the roadmap. If no course matches the selected filters, the UI shows an empty-state message.
+
+### Explainability
+
+The app has two explanation layers:
+
+- score-level explanation: profile match, skill match, market share, trend score;
+- skill-level explanation: which skills increased or decreased the classifier confidence for the selected profession.
+
+Skill-level explainability is implemented in `backend/services/classifier.py`:
+
+1. It first tries CatBoost local SHAP values.
+2. If SHAP cannot be computed for the runtime/model, it falls back to a model-aware feature-importance and counterfactual delta approach.
+
+The frontend shows:
+
+- bar chart of skill impact;
+- top positive skills;
+- top missing or negative skills;
+- plain-language explanation for students.
+
+When the user selects another profession, the explanation panel updates for that selected profession.
+
+### SQLite Persistence
+
+The project uses local SQLite storage:
+
+```text
+backend/data/career_advisor.sqlite3
+```
+
+The database is initialized automatically on backend startup. It is ignored by git and Docker build context.
+
+Current tables:
+
+| Table | Purpose |
+| --- | --- |
+| `users` | Local/demo user record, ready for future authentication |
+| `recommendation_sessions` | Recommendation payloads, profile JSON, LLM context, progress JSON |
+| `specialization_scores` | Final, classifier, skill, trend, market, vacancy scores per profession |
+| `skill_gaps` | Full and missing skills by profession/category |
+| `roadmap_items` | Roadmap tasks, order, completion state, related courses |
+| `course_progress` | Per-course progress placeholders |
+| `course_filter_preferences` | Saved filter state per recommendation session |
+
+There is no full authentication yet. Data is saved for a demo user (`demo`) so the architecture can later be extended to real user accounts.
+
+### Visual Analytics
+
+The results page includes:
+
+- best match card;
+- all-profession bars chart;
+- multi-profession radar chart;
+- skill-gap comparison;
+- score circles;
+- factor bars with tooltips;
+- responsive desktop and mobile layouts.
+
+### Learning Roadmap
+
+Roadmap features:
+
+- personalized skill-gap roadmap for the recommended profession;
+- courses attached to missing skills;
+- drag-and-drop category and skill ordering;
+- checklist state for completed skills;
+- completed steps section;
+- roadmap progress bar;
+- skill dependency tree with prerequisites and next recommended step;
+- persistence through SQLite with localStorage fallback.
+
+### AI Advisor
+
+The AI advisor is optional and uses Gemini when `API_KEY` is provided.
+
+Features:
+
+- grounded responses based on the current recommendation context;
+- streaming responses;
+- deep/thinking mode UI;
+- voice transcription endpoint;
+- speech playback in supported browsers;
+- prompt-injection and off-topic guardrails;
+- compact translucent floating button that does not block course browsing.
+
+Without `API_KEY`, the recommendation pipeline still works, but chat endpoints return a configuration error.
+
+### Resume / CV Parser
+
+The backend can parse raw file bytes for:
+
+- text-based PDF files;
+- TXT files;
+- document-like files with extractable text.
+
+It extracts:
+
+- detected skills;
+- possible current role;
+- text preview.
+
+Scanned image-only resumes require OCR and are not fully supported yet.
+
+### Localization
+
+The frontend supports:
+
+- English;
+- Russian;
+- Kazakh.
+
+Translations cover main UI, profession names, filters, roadmap, explanations, AI advisor texts, and PDF labels.
+
+## System Architecture
+
+```text
+Student profile / uploaded resume
+        |
+        v
+FastAPI backend
+        |
+        |-- CatBoost classifier -> profile probabilities + SHAP/fallback skill explanations
+        |-- TF-IDF skill matcher -> profession skill similarity
+        |-- LightGBM demand model -> trend and market-share scores
+        |-- Roadmap engine -> skill gaps
+        |-- Course finder -> filtered course metadata from all_courses.csv
+        |-- SQLite database -> history, scores, gaps, roadmap progress, filter preferences
+        |-- PyMuPDF parser -> resume skills and role extraction
+        |-- Gemini LLM service -> optional AI advisor
+        |
+        v
+React frontend
+        |
+        |-- profile form
+        |-- all-profession visual analytics
+        |-- SHAP/fallback skill impact UI
+        |-- course filters
+        |-- roadmap and dependency tree
+        |-- AI advisor side panel
+        |-- PDF export
+```
+
 ## Tech Stack
 
 | Layer | Tools |
 | --- | --- |
 | Backend | Python, FastAPI, Uvicorn, Pydantic |
+| Database | SQLite, lightweight custom data-access layer |
 | ML | CatBoost, LightGBM, scikit-learn, pandas, NumPy, joblib |
 | Resume parsing | PyMuPDF |
 | Frontend | React, Framer Motion, CSS Modules |
@@ -164,31 +246,35 @@ Final score =
 ```text
 Career-Recommendation-System/
 ├── backend/
-│   ├── data/                     # Vacancy and course datasets
-│   ├── models/                   # Serialized models, vectorizers, profiles
+│   ├── data/
+│   │   ├── all_courses.csv              # Course catalog with prices
+│   │   ├── vacancy_data.csv             # Demand dataset
+│   │   └── career_advisor.sqlite3       # Local runtime DB, gitignored
+│   ├── models/                          # Serialized ML models and profiles
 │   ├── services/
-│   │   ├── classifier.py         # CatBoost classifier wrapper
-│   │   ├── course_finder.py      # Course lookup and roadmap courses
-│   │   ├── demand.py             # LightGBM demand forecast
-│   │   ├── llm.py                # Gemini chat service
-│   │   ├── resume_parser.py      # PDF/TXT resume parser
-│   │   └── skill_matcher.py      # TF-IDF skill matching
-│   ├── tests/                    # Backend tests
-│   ├── main.py                   # FastAPI app and endpoints
-│   ├── roadmap.py                # Skill-gap roadmap logic
-│   ├── schemas.py                # Pydantic schemas
-│   └── pyproject.toml            # Backend dependencies
+│   │   ├── classifier.py                # CatBoost scoring and SHAP/fallback explainability
+│   │   ├── course_finder.py             # Course metadata and roadmap course lookup
+│   │   ├── demand.py                    # Demand scoring
+│   │   ├── llm.py                       # Gemini chat and voice transcription
+│   │   ├── resume_parser.py             # Resume parser
+│   │   └── skill_matcher.py             # Skill matching
+│   ├── tests/                           # Backend tests
+│   ├── database.py                      # SQLite schema and persistence layer
+│   ├── main.py                          # FastAPI routes
+│   ├── roadmap.py                       # Roadmap generation
+│   ├── schemas.py                       # Pydantic schemas
+│   └── pyproject.toml                   # Backend dependencies
 ├── frontend/
 │   ├── public/
 │   ├── package.json
 │   └── src/
-│       ├── components/           # Navbar and shared UI
-│       ├── context/              # App theme/language context
-│       ├── pages/                # Hero, Form, Results
-│       ├── utils/api.js          # Backend API client
-│       └── i18n.js               # EN/RU/KZ translations
-├── ml/                           # Research notebooks and model work
-├── scripts/                      # Supporting scripts
+│       ├── components/
+│       ├── context/
+│       ├── pages/
+│       ├── utils/api.js
+│       └── i18n.js
+├── ml/                                  # Research notebooks and model work
+├── scripts/
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
@@ -196,7 +282,9 @@ Career-Recommendation-System/
 
 ## Quick Start With Docker
 
-Docker is the recommended way to run the full application because the ML dependencies are heavy. The local Python environment must have CatBoost, LightGBM, PyMuPDF, and compatible scientific packages installed; Docker handles this automatically.
+Docker is the recommended way to run the whole app because the ML dependencies are heavy.
+
+From the project root:
 
 ```bash
 docker compose up --build
@@ -214,16 +302,28 @@ Open API docs:
 http://localhost:8000/docs
 ```
 
-Optional AI advisor support:
+Optional Gemini AI advisor:
 
 ```bash
 API_KEY=your_google_gemini_api_key docker compose up --build
 ```
 
-On Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
 $env:API_KEY="your_google_gemini_api_key"
+docker compose up --build
+```
+
+Or create a root `.env` file:
+
+```env
+API_KEY=your_google_gemini_api_key
+```
+
+Then run:
+
+```bash
 docker compose up --build
 ```
 
@@ -231,6 +331,13 @@ Stop containers:
 
 ```bash
 docker compose down
+```
+
+If the build fails with `IncompleteRead` during `pip install`, retry the build. The Dockerfile uses pip retries and longer timeouts, but large ML wheels can still fail on unstable network connections:
+
+```bash
+docker compose build --no-cache
+docker compose up
 ```
 
 ## Local Development
@@ -246,16 +353,18 @@ Windows PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-pip install ".[dev]"
-uvicorn main:app --reload --port 8000
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 macOS / Linux:
 
 ```bash
 source .venv/bin/activate
-pip install ".[dev]"
-uvicorn main:app --reload --port 8000
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Backend URL:
@@ -264,7 +373,15 @@ Backend URL:
 http://localhost:8000
 ```
 
+Health check:
+
+```bash
+curl http://localhost:8000/health
+```
+
 ### Frontend
+
+In another terminal:
 
 ```bash
 cd frontend
@@ -278,32 +395,29 @@ Frontend dev URL:
 http://localhost:3000
 ```
 
-When frontend runs on port 3000, the API client automatically uses:
+For local frontend + local backend, set `frontend/.env`:
 
-```text
-http://localhost:8000
+```env
+REACT_APP_API_URL=http://localhost:8000
 ```
 
-For another backend URL:
+Restart `npm start` after changing `.env`.
 
-```bash
-REACT_APP_API_URL=http://localhost:8000 npm start
-```
-
-PowerShell:
-
-```powershell
-$env:REACT_APP_API_URL="http://localhost:8000"
-npm start
-```
+In Docker/production, the React build is served by FastAPI on port `8000`, so `REACT_APP_API_URL` is intentionally empty.
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/health` | GET | Backend health check |
-| `/recommend` | POST | Generates recommendation, scores, roadmap, courses, all-profession gap summaries, and chat session context |
-| `/parse-resume` | POST | Parses uploaded resume/CV bytes and extracts skills/current role |
+| `/recommend` | POST | Generates recommendation, scores, skill explanations, roadmap, courses, and session context |
+| `/recommendation/history` | GET | Lists saved demo-user recommendation sessions |
+| `/recommendation/history` | DELETE | Clears saved demo-user history |
+| `/recommendation/{session_id}/state` | GET | Loads saved result, progress, and course filter preferences |
+| `/recommendation/{session_id}/progress` | PUT | Saves roadmap checklist and drag-and-drop order |
+| `/recommendation/{session_id}/course-filters` | PUT | Saves course filter preferences |
+| `/parse-resume` | POST | Parses uploaded resume/CV bytes |
+| `/voice/transcribe` | POST | Transcribes short audio input via Gemini |
 | `/chat` | POST | Non-streaming AI advisor response |
 | `/chat/stream` | POST | Streaming AI advisor response |
 | `/` | GET | Serves the React build in Docker/production |
@@ -343,11 +457,40 @@ The response includes:
 - `skill_scores`
 - `classification_scores`
 - `demand_scores`
+- `skill_explanations`
 - `roadmap_with_courses`
 - `full_roadmap`
 - `roadmaps_by_profession`
 - `session_id`
 - `context`
+
+### Roadmap Progress Request
+
+```json
+{
+  "doneSkills": ["libraries::pytorch"],
+  "categoryOrder": ["programming", "libraries", "cloud"],
+  "skillOrders": {
+    "libraries": ["pytorch", "tensorflow"]
+  },
+  "selectedProfession": "Machine Learning Engineer"
+}
+```
+
+### Course Filter Preferences Request
+
+```json
+{
+  "filters": {
+    "certificate": "with",
+    "price": "paid",
+    "language": "en",
+    "platform": "Udemy",
+    "level": "Beginner"
+  },
+  "user_id": "demo"
+}
+```
 
 ### Resume Parser Request
 
@@ -378,12 +521,20 @@ Example response:
 
 ## Testing
 
-Backend tests use mocked ML/LLM services for most API flows, so Gemini keys and a running model server are not required.
+Backend tests:
 
 ```bash
 cd backend
-pip install ".[dev]"
+pip install -e ".[dev]"
 python -m pytest
+```
+
+Frontend production build:
+
+```bash
+cd frontend
+npm install
+npm run build
 ```
 
 Frontend tests:
@@ -393,75 +544,96 @@ cd frontend
 npm test -- --watchAll=false
 ```
 
-Frontend production build:
-
-```bash
-cd frontend
-npm run build
-```
-
-Current checked test coverage includes:
+Current backend tests cover:
 
 - recommendation response shape;
 - scoring aggregation;
 - all-profession score coverage;
 - roadmap course output;
 - chat context behavior;
-- resume parser false-positive protection;
-- localization dictionaries for EN/RU/KZ.
+- streaming chat;
+- language-aware course lookup;
+- resume parser false-positive protection.
 
 ## Troubleshooting
 
-### `Server error. Please try again.` on `/recommend`
+### Docker build fails with `IncompleteRead`
 
-If this happens during local development, check the backend terminal. A common cause is missing ML dependencies:
+This is usually a network interruption while downloading large Python wheels such as CatBoost, pandas, scikit-learn, or LightGBM.
 
-```text
-No module named 'catboost'
-No module named 'lightgbm'
-```
-
-Fix options:
+Retry:
 
 ```bash
-cd backend
-pip install ".[dev]"
-uvicorn main:app --reload --port 8000
+docker compose build --no-cache
+docker compose up
 ```
 
-Or use Docker:
+### `/recommend` returns `No module named 'catboost'`
+
+The backend is running outside the environment where dependencies were installed.
+
+Fix:
+
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Or run Docker:
 
 ```bash
 docker compose up --build
 ```
 
+### Frontend cannot reach backend in local development
+
+Check `frontend/.env`:
+
+```env
+REACT_APP_API_URL=http://localhost:8000
+```
+
+Restart `npm start`.
+
 ### Port 8000 is already in use
 
-Stop the existing process or container:
+Stop the old container:
 
 ```bash
 docker compose down
 ```
 
-Then start again:
+Or find the local process on Windows:
 
-```bash
-docker compose up --build
+```powershell
+Get-NetTCPConnection -LocalPort 8000
 ```
 
 ### AI chat does not answer
 
-Recommendation generation works without an AI key, but Gemini chat requires:
+The AI advisor requires:
 
-```text
+```env
 API_KEY=your_google_gemini_api_key
 ```
 
-Without the key, chat endpoints return a configuration error while the recommendation pipeline remains usable.
+Recommendation generation, course filters, roadmap, and charts work without this key.
+
+### SQLite database should be reset
+
+Stop the backend and delete:
+
+```text
+backend/data/career_advisor.sqlite3
+```
+
+The schema will be recreated on the next backend startup.
 
 ### PDF parser misses text
 
-The parser works best with text-based PDFs. If a CV is a scan or image-only PDF, the backend needs OCR support, for example Tesseract or a cloud OCR service.
+The parser works best with text-based PDFs. Image-only scanned resumes need OCR, which is not included yet.
 
 ## Model Results
 
@@ -487,30 +659,32 @@ Best representative model: LightGBM with selected features.
 
 ## Datasets
 
-| Dataset | Size | Purpose |
-| --- | ---: | --- |
-| `ml/classification/data/raw/career_multilabel_dataset.csv` | 2,000 rows | Initial student-profile data |
-| `ml/classification/data/balanced/career_multilabel_dataset_balanced.csv` | 2,819 rows | Balanced classifier training data |
-| `backend/data/vacancy_data.csv` | 371 rows | Weekly vacancy-demand forecasting |
-| `backend/data/courses_combined.csv` | 41,693 rows | Course matching for roadmaps |
+| Dataset | Purpose |
+| --- | --- |
+| `ml/classification/data/raw/career_multilabel_dataset.csv` | Initial student-profile data |
+| `ml/classification/data/balanced/career_multilabel_dataset_balanced.csv` | Balanced classifier training data |
+| `backend/data/vacancy_data.csv` | Weekly vacancy-demand forecasting |
+| `backend/data/all_courses.csv` | Course recommendations with platform, difficulty, certificate and price metadata |
 
 ## Current Limitations
 
-- User accounts are not connected to a production database yet. History and roadmap progress are stored locally in the browser.
+- Authentication is not implemented yet; persistence currently uses a demo user.
+- SQLite is local and intended for demo/development deployment.
+- Course price values are numeric because the dataset does not include a currency column.
 - Resume parsing does not include OCR for scanned PDFs.
-- Explainability in the frontend uses transparent factor importance from the scoring pipeline. Full per-user SHAP explanations require a dedicated backend explainability endpoint and model artifacts.
-- Course lookup is generated for the primary roadmap; all-profession skill-gap summaries are returned without course lookup to keep `/recommend` responsive.
+- SHAP is attempted for the CatBoost classifier, but the code intentionally falls back to feature-importance/counterfactual explanations when SHAP is unavailable in the current runtime.
+- Demand forecasting uses packaged data and model artifacts, not a live vacancy feed.
 
 ## Future Improvements
 
-- Add authentication and persistent user profiles.
-- Store recommendation history, roadmap order, and progress in a database.
+- Add authentication and per-user profiles.
+- Add migrations with Alembic if the schema grows.
 - Add OCR for scanned resumes.
-- Add production-grade SHAP or model-specific explanation endpoints.
+- Add course currency/source normalization.
 - Connect demand forecasting to live vacancy data.
 - Add CI for backend tests and frontend build.
 - Add model registry and dataset versioning with MLflow or DVC.
 
 ## License
 
-This repository is currently intended for academic and portfolio demonstration purposes. Add an explicit license before public reuse or distribution.
+This repository is intended for academic and portfolio demonstration purposes. Add an explicit license before public reuse or distribution.

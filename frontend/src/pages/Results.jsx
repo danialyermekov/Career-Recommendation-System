@@ -1,7 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { useApp } from '../context/AppContext'
 import styles from './Results.module.css'
-import { sendChatStream } from '../utils/api';
+import {
+  clearRecommendationHistory,
+  getRecommendationHistory,
+  getRecommendationState,
+  saveCourseFilterPreferences,
+  saveRoadmapProgress,
+  sendChatStream,
+  transcribeVoice,
+} from '../utils/api';
 /* ─── Constants ─────────────────────────────────────────────── */
 const CATEGORY_ICONS = {
   programming: '</>',
@@ -43,15 +51,72 @@ const BAR_TOOLTIPS = {
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 
 const detectCourseLanguage = course => {
+  if (course?.language) return course.language
   const text = `${course?.title || ''} ${course?.description || ''}`
+  if (/[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(text)) return 'kk'
   return /[А-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(text) ? 'ru' : 'en'
 }
 
-const preferredCourseLanguage = lang => lang === 'en' ? 'en' : 'ru'
-const filterCoursesByLanguage = (courses = [], lang) => {
-  const preferred = courses.filter(course => detectCourseLanguage(course) === preferredCourseLanguage(lang))
-  return preferred.length ? preferred : courses
+const COURSE_FILTER_DEFAULTS = {
+  certificate: 'all',
+  price: 'all',
+  language: 'all',
+  platform: 'all',
+  level: 'all',
 }
+const COURSE_FILTER_KEYS = Object.keys(COURSE_FILTER_DEFAULTS)
+const normalizeFilterValue = value => String(value ?? '').trim().toLowerCase()
+const normalizeCourseLevel = value => {
+  const text = normalizeFilterValue(value || 'Mixed')
+  if (text.includes('beginner') || text.includes('нач')) return 'Beginner'
+  if (text.includes('intermediate') || text.includes('сред')) return 'Intermediate'
+  if (text.includes('advanced') || text.includes('продвин') || text.includes('проф')) return 'Advanced'
+  return 'Mixed'
+}
+const courseHasCertificate = course => course?.certificate === true || normalizeFilterValue(course?.certificate) === 'true'
+const coursePriceType = course => {
+  if (course?.price_type) return normalizeFilterValue(course.price_type)
+  const numeric = Number(course?.price)
+  if (Number.isFinite(numeric)) return numeric <= 0 ? 'free' : 'paid'
+  return normalizeFilterValue(course?.price || 'unknown')
+}
+const formatCoursePrice = (course, t) => {
+  const type = coursePriceType(course)
+  const labels = t.results.courseFilters || {}
+  const numeric = Number(course?.price)
+  if (type === 'free') return labels.free || 'Free'
+  if (Number.isFinite(numeric) && numeric > 0) return numeric.toFixed(2)
+  if (type === 'paid') return labels.paid || 'Paid'
+  return ''
+}
+const normalizeCourse = course => ({
+  ...course,
+  language: detectCourseLanguage(course),
+  level: normalizeCourseLevel(course?.level || course?.difficulty),
+  price_type: coursePriceType(course),
+  certificate: courseHasCertificate(course),
+})
+const courseMatchesFilters = (course, filters = COURSE_FILTER_DEFAULTS) => {
+  const c = normalizeCourse(course)
+  if (filters.certificate === 'with' && !c.certificate) return false
+  if (filters.certificate === 'without' && c.certificate) return false
+  if (filters.price === 'free' && c.price_type !== 'free') return false
+  if (filters.price === 'paid' && c.price_type !== 'paid') return false
+  if (filters.language !== 'all' && c.language !== filters.language) return false
+  if (filters.platform !== 'all' && normalizeFilterValue(c.platform) !== normalizeFilterValue(filters.platform)) return false
+  if (filters.level !== 'all' && c.level !== filters.level) return false
+  return true
+}
+const filterCourses = (courses = [], filters) => courses.map(normalizeCourse).filter(course => courseMatchesFilters(course, filters))
+const getCourseFilterOptions = courses => {
+  const normalized = courses.map(normalizeCourse)
+  return {
+    languages: [...new Set(normalized.map(course => course.language).filter(Boolean))],
+    platforms: [...new Set(normalized.map(course => course.platform).filter(Boolean))].sort(),
+    levels: [...new Set(normalized.map(course => course.level).filter(Boolean))],
+  }
+}
+const activeCourseFilterCount = filters => COURSE_FILTER_KEYS.filter(key => filters[key] && filters[key] !== 'all').length
 
 const normalizeSkillKey = s => String(s || '').toLowerCase().replace(/[^a-z0-9+#]+/g, '_').replace(/^_+|_+$/g, '')
 const pct = (value, max = 1) => Math.max(0, Math.min(100, Math.round((parseFloat(value || 0) / max) * 100)))
@@ -63,6 +128,90 @@ const getProfessionRoadmapSummary = (results, profession) => {
   const all = results?.roadmaps_by_profession?.[profession]
   if (all) return all
   return { full: results?.full_roadmap || {}, gap: {} }
+}
+
+const mergeAudioChunks = chunks => {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const samples = new Float32Array(totalLength)
+  let offset = 0
+  chunks.forEach(chunk => {
+    samples.set(chunk, offset)
+    offset += chunk.length
+  })
+  return samples
+}
+
+const getAudioRms = samples => {
+  if (!samples.length) return 0
+  const sumSquares = samples.reduce((sum, sample) => sum + sample * sample, 0)
+  return Math.sqrt(sumSquares / samples.length)
+}
+
+const encodeWav = (samples, sampleRate) => {
+  const bytesPerSample = 2
+  const blockAlign = bytesPerSample
+  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample)
+  const view = new DataView(buffer)
+  const writeString = (offset, string) => {
+    for (let i = 0; i < string.length; i += 1) view.setUint8(offset + i, string.charCodeAt(i))
+  }
+
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * blockAlign, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, samples.length * bytesPerSample, true)
+
+  let offset = 44
+  samples.forEach(sample => {
+    const clamped = Math.max(-1, Math.min(1, sample))
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true)
+    offset += bytesPerSample
+  })
+
+  return new Blob([view], { type: 'audio/wav' })
+}
+
+const createWavRecorder = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  const AudioContext = window.AudioContext || window.webkitAudioContext
+  const audioContext = new AudioContext()
+  const source = audioContext.createMediaStreamSource(stream)
+  const processor = audioContext.createScriptProcessor(4096, 1, 1)
+  const mutedOutput = audioContext.createGain()
+  const chunks = []
+
+  mutedOutput.gain.value = 0
+  processor.onaudioprocess = event => {
+    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)))
+  }
+
+  source.connect(processor)
+  processor.connect(mutedOutput)
+  mutedOutput.connect(audioContext.destination)
+
+  return {
+    stop: async () => {
+      processor.disconnect()
+      mutedOutput.disconnect()
+      source.disconnect()
+      stream.getTracks().forEach(track => track.stop())
+      await audioContext.close()
+      const samples = mergeAudioChunks(chunks)
+      return {
+        blob: encodeWav(samples, audioContext.sampleRate),
+        rms: getAudioRms(samples),
+      }
+    },
+  }
 }
 
 const DEPENDENCY_RULES = {
@@ -474,7 +623,73 @@ function ScoreCircleGrid({ professions, rows, profLabel, t, onSelect }) {
   )
 }
 
-function ExplainabilityPanel({ profession, rows, profLabel, t }) {
+function SkillImpactChart({ explanation, profName, t }) {
+  const items = explanation?.items || []
+  if (!items.length) return null
+  const maxImpact = Math.max(...items.map(item => item.abs_value || Math.abs(item.value || 0)), 0.001)
+  const positive = explanation.positive || items.filter(item => item.value > 0)
+  const negative = explanation.negative || items.filter(item => item.value < 0)
+  const methodText = explanation.method === 'catboost_shap' ? t.results.shapMethod : t.results.shapFallback
+  const magnitude = item => t.results.impactMagnitude?.[item.magnitude] || item.magnitude
+  const itemText = item => {
+    if (item.direction === 'positive') return t.results.skillPositiveText?.(item.skill, magnitude(item), profName) || item.text
+    if (item.direction === 'missing') return t.results.skillMissingText?.(item.skill, magnitude(item), profName) || item.text
+    return t.results.skillNegativeText?.(item.skill, magnitude(item), profName) || item.text
+  }
+
+  return (
+    <div className={styles.skillExplainBlock}>
+      <div className={styles.skillExplainHeader}>
+        <div>
+          <strong>{t.results.skillImpactTitle}</strong>
+          <span>{methodText}</span>
+        </div>
+        <button className={styles.infoPill} type="button" title={t.results.shapTooltip}>SHAP</button>
+      </div>
+      <p className={styles.explainText}>
+        {t.results.skillImpactSummary?.(
+          profName,
+          positive[0]?.skill || t.results.yourCurrentSkills,
+          negative[0]?.skill || t.results.noMajorGaps,
+        ) || explanation.summary}
+      </p>
+      <div className={styles.skillImpactChart}>
+        {items.map(item => {
+          const width = Math.max(5, Math.round((item.abs_value || Math.abs(item.value || 0)) / maxImpact * 100))
+          const positiveImpact = item.value >= 0
+          return (
+            <div key={item.feature || item.skill} className={styles.skillImpactRow} title={itemText(item)}>
+              <span className={styles.skillImpactName}>{item.skill}</span>
+              <span className={styles.skillImpactTrack}>
+                <i
+                  className={positiveImpact ? styles.skillImpactPositive : styles.skillImpactNegative}
+                  style={{ width: `${width}%` }}
+                />
+              </span>
+              <span className={styles.skillImpactValue}>{positiveImpact ? '+' : ''}{Math.round((item.value || 0) * 100)}%</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className={styles.skillImpactLists}>
+        <div>
+          <strong>{t.results.topPositiveSkills}</strong>
+          {positive.length ? positive.slice(0, 4).map(item => (
+            <p key={item.feature || item.skill}>{itemText(item)}</p>
+          )) : <p>{t.results.noPositiveSkills}</p>}
+        </div>
+        <div>
+          <strong>{t.results.topMissingSkills}</strong>
+          {negative.length ? negative.slice(0, 4).map(item => (
+            <p key={item.feature || item.skill}>{itemText(item)}</p>
+          )) : <p>{t.results.noMissingSkills}</p>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ExplainabilityPanel({ profession, rows, profLabel, t, skillExplanation }) {
   if (!profession) return null
   const contributions = rows
     .filter(row => profession[row.key] != null)
@@ -494,6 +709,7 @@ function ExplainabilityPanel({ profession, rows, profLabel, t }) {
       <p className={styles.explainText}>
         {t.results.whyTop ? t.results.whyTop(profLabel(profession.name)) : profLabel(profession.name)}
       </p>
+      <SkillImpactChart explanation={skillExplanation} profName={profLabel(profession.name)} t={t}/>
       <div className={styles.explainFactors}>
         {contributions.map(item => (
           <div key={item.key} className={styles.explainFactor}>
@@ -557,6 +773,139 @@ function SkillDependencyTree({ roadmap, doneSkills, formSkills, t }) {
           </div>
         ))}
       </div>
+    </section>
+  )
+}
+
+function CourseFilters({ filters, options, onChange, onReset, t }) {
+  const labels = t.results.courseFilters
+  const languageLabels = t.results.courseLanguages || {}
+  const activeCount = activeCourseFilterCount(filters)
+  const setFilter = (key, value) => onChange({ ...filters, [key]: value })
+  const languageOptions = ['en', 'ru', 'kk', 'other', ...(options.languages || [])]
+    .filter((value, index, arr) => arr.indexOf(value) === index)
+  const levelOptions = ['Beginner', 'Intermediate', 'Advanced', 'Mixed', ...(options.levels || [])]
+    .filter((value, index, arr) => arr.indexOf(value) === index)
+  const platformOptions = ['Coursera', 'Udemy', 'edX', ...(options.platforms || [])]
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.findIndex(item => normalizeFilterValue(item) === normalizeFilterValue(value)) === index)
+
+  return (
+    <section className={styles.courseFilterPanel}>
+      <div className={styles.compareHeader}>
+        <span>{labels.title}</span>
+        <small>{labels.active(activeCount)}</small>
+      </div>
+      <div className={styles.courseFilterGrid}>
+        <label>
+          <span>{labels.certificate}</span>
+          <select value={filters.certificate} onChange={e => setFilter('certificate', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            <option value="with">{labels.withCertificate}</option>
+            <option value="without">{labels.withoutCertificate}</option>
+          </select>
+        </label>
+        <label>
+          <span>{labels.price}</span>
+          <select value={filters.price} onChange={e => setFilter('price', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            <option value="free">{labels.free}</option>
+            <option value="paid">{labels.paid}</option>
+          </select>
+        </label>
+        <label>
+          <span>{labels.language}</span>
+          <select value={filters.language} onChange={e => setFilter('language', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            {languageOptions.map(value => (
+              <option key={value} value={value}>{languageLabels[value] || value}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{labels.platform}</span>
+          <select value={filters.platform} onChange={e => setFilter('platform', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            {platformOptions.map(value => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{labels.level}</span>
+          <select value={filters.level} onChange={e => setFilter('level', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            {levelOptions.map(value => (
+              <option key={value} value={value}>{labels.levels?.[value] || value}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {activeCount > 0 && (
+        <div className={styles.activeFilters}>
+          {COURSE_FILTER_KEYS.filter(key => filters[key] !== 'all').map(key => (
+            <button key={key} type="button" onClick={() => setFilter(key, 'all')}>
+              {labels[key]}: {labels[filters[key]] || languageLabels[filters[key]] || labels.levels?.[filters[key]] || filters[key]}
+            </button>
+          ))}
+          <button type="button" className={styles.resetFilters} onClick={onReset}>{labels.reset}</button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function CourseCard({ course, t, onOpen, onCopy, copied }) {
+  return (
+    <div className={styles.courseWrap}>
+      <div className={styles.course} style={{ cursor: 'pointer' }} onClick={() => onOpen(course)}>
+        <span className={styles.coursePlatform}>{course.platform}</span>
+        <span className={styles.courseTitle}>{course.title}</span>
+        <span className={styles.courseMeta}>
+          {course.rating > 0 && <span className={styles.courseRating}>★ {course.rating}</span>}
+          {course.reviews != null && (
+            <span className={styles.courseReviews}>
+              {Number(course.reviews).toLocaleString()} {t.results.reviews}
+            </span>
+          )}
+          <span className={styles.courseReviews}>{t.results.courseLanguages?.[course.language] || course.language}</span>
+          <span className={styles.courseReviews}>{t.results.courseFilters?.levels?.[course.level] || course.level}</span>
+          {formatCoursePrice(course, t) && <span className={styles.coursePrice}>{formatCoursePrice(course, t)}</span>}
+        </span>
+      </div>
+      <button className={styles.courseCopyBtn} onClick={onCopy}>
+        {copied ? <CheckIcon/> : <CopyIcon/>}
+      </button>
+    </div>
+  )
+}
+
+function RecommendedCoursePanel({ courses, filters, t, onOpen, onCopy, copiedMsg }) {
+  const visible = filterCourses(courses, filters)
+  return (
+    <section className={styles.recommendedCoursesPanel}>
+      <div className={styles.compareHeader}>
+        <span>{t.results.courses}</span>
+        <small>{visible.length}/{courses.length}</small>
+      </div>
+      {visible.length === 0 ? (
+        <div className={styles.courseEmptyState}>{t.results.courseEmptyState}</div>
+      ) : (
+        <div className={styles.courseCardGrid}>
+          {visible.slice(0, 8).map((course, index) => (
+            <div key={`${course.skill}-${course.title}-${index}`} className={styles.courseGridItem}>
+              <span className={styles.courseSkillTag}>{cap(course.skill)}</span>
+              <CourseCard
+                course={course}
+                t={t}
+                onOpen={onOpen}
+                copied={copiedMsg === `recommended-${index}`}
+                onCopy={e => onCopy(e, course, `recommended-${index}`)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
@@ -1072,12 +1421,13 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const [listening, setListening] = useState(false)
   const [voiceNotice, setVoiceNotice] = useState('')
   const [chatSize, setChatSize] = useState({ width: 360, height: null })
+  const [courseFilters, setCourseFilters] = useState(COURSE_FILTER_DEFAULTS)
 
   const messagesEndRef = useRef(null)
   const greetedRef     = useRef(false)
   const textareaRef    = useRef(null)
   const abortRef       = useRef(null)
-  const recognitionRef = useRef(null)
+  const voiceRecorderRef = useRef(null)
 
   useEffect(() => {
     setResults(initialResults)
@@ -1150,10 +1500,26 @@ export default function Results({ results: initialResults, formData, onBack, onR
           reviews:     c.num_reviews ?? c.reviews ?? null,
           url:         c.course_url || null,
           description: c.description || c.short_intro || null,
+          certificate: c.certificate ?? false,
+          language:    c.language,
+          level:       c.level || c.difficulty || 'Mixed',
+          difficulty:  c.difficulty || c.level || 'Mixed',
+          price_type:  c.price_type || 'unknown',
+          price:       c.price ?? null,
         })),
       })),
     ])
   )
+
+  const allRoadmapCourses = Object.entries(roadmapAdapted).flatMap(([cat, skills]) =>
+    skills.flatMap(item => (item.courses || []).map(course => ({
+      ...normalizeCourse(course),
+      cat,
+      skill: item.skill,
+    })))
+  )
+  const courseFilterOptions = getCourseFilterOptions(allRoadmapCourses)
+  const selectedSkillExplanation = results.skill_explanations?.[activeProf?.name] || null
 
   const orderedCategoryKeys = (categoryOrder.length ? categoryOrder : Object.keys(roadmapAdapted))
     .filter(cat => roadmapAdapted[cat])
@@ -1196,12 +1562,36 @@ export default function Results({ results: initialResults, formData, onBack, onR
     setOpenCats(new Set(keys))
     setCategoryOrder(keys)
     setSkillOrders(Object.fromEntries(keys.map(cat => [cat, roadmapAdapted[cat].map(item => item.skill)])))
-    try {
-      const saved = JSON.parse(localStorage.getItem(resultStorageKey) || '{}')
-      if (Array.isArray(saved.doneSkills)) setDoneSkills(new Set(saved.doneSkills))
-      if (Array.isArray(saved.categoryOrder)) setCategoryOrder(saved.categoryOrder)
-      if (saved.skillOrders) setSkillOrders(saved.skillOrders)
-    } catch {}
+    setDoneSkills(new Set())
+    setCourseFilters(COURSE_FILTER_DEFAULTS)
+    let cancelled = false
+    const applyLocalFallback = () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem(resultStorageKey) || '{}')
+        if (Array.isArray(saved.doneSkills)) setDoneSkills(new Set(saved.doneSkills))
+        if (Array.isArray(saved.categoryOrder)) setCategoryOrder(saved.categoryOrder)
+        if (saved.skillOrders) setSkillOrders(saved.skillOrders)
+        if (saved.courseFilters) setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...saved.courseFilters })
+      } catch {}
+    }
+    if (results.session_id) {
+      getRecommendationState(results.session_id)
+        .then(state => {
+          if (cancelled) return
+          const progress = state.progress || {}
+          if (Array.isArray(progress.doneSkills)) setDoneSkills(new Set(progress.doneSkills))
+          if (Array.isArray(progress.categoryOrder) && progress.categoryOrder.length) setCategoryOrder(progress.categoryOrder)
+          if (progress.skillOrders) setSkillOrders(progress.skillOrders)
+          if (progress.selectedProfession) setSelectedProf(progress.selectedProfession)
+          if (state.filters && Object.keys(state.filters).length) {
+            setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...state.filters })
+          }
+        })
+        .catch(applyLocalFallback)
+    } else {
+      applyLocalFallback()
+    }
+    return () => { cancelled = true }
   }, [resultStorageKey])
 
   useEffect(() => {
@@ -1210,16 +1600,42 @@ export default function Results({ results: initialResults, formData, onBack, onR
         doneSkills: Array.from(doneSkills),
         categoryOrder,
         skillOrders,
+        courseFilters,
       }))
     } catch {}
-  }, [doneSkills, categoryOrder, skillOrders, resultStorageKey])
+  }, [doneSkills, categoryOrder, skillOrders, courseFilters, resultStorageKey])
 
   useEffect(() => {
-    try {
-      setHistory(JSON.parse(localStorage.getItem('career-recommendation-history') || '[]'))
-    } catch {
-      setHistory([])
-    }
+    if (!results.session_id) return
+    const timer = setTimeout(() => {
+      saveRoadmapProgress(results.session_id, {
+        doneSkills: Array.from(doneSkills),
+        categoryOrder,
+        skillOrders,
+        selectedProfession: activeProfName,
+      }).catch(() => {})
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [doneSkills, categoryOrder, skillOrders, activeProfName, results.session_id])
+
+  useEffect(() => {
+    if (!results.session_id) return
+    const timer = setTimeout(() => {
+      saveCourseFilterPreferences(results.session_id, courseFilters).catch(() => {})
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [courseFilters, results.session_id])
+
+  useEffect(() => {
+    getRecommendationHistory()
+      .then(data => setHistory(data.items || []))
+      .catch(() => {
+        try {
+          setHistory(JSON.parse(localStorage.getItem('career-recommendation-history') || '[]'))
+        } catch {
+          setHistory([])
+        }
+      })
   }, [])
 
   useEffect(() => {
@@ -1380,6 +1796,17 @@ export default function Results({ results: initialResults, formData, onBack, onR
     setTimeout(() => setCopied(null), 2000)
   }
 
+  const handleCopyCourse = (event, course, key) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const text = course.url ? `${course.title} (${course.platform}): ${course.url}` : `${course.title} (${course.platform})`
+    copyText(text)
+    setCopiedMsg(key)
+    setTimeout(() => setCopiedMsg(null), 2000)
+  }
+
+  const resetCourseFilters = () => setCourseFilters(COURSE_FILTER_DEFAULTS)
+
   const handleShare = () => {
     const text = `${t.results.selectedCareer}: ${profLabel(top_profession)} ${activeProf?.final_score ? Math.round(activeProf.final_score * 100) + '%' : ''} - CareerPath`
     if (navigator.share) {
@@ -1408,6 +1835,17 @@ export default function Results({ results: initialResults, formData, onBack, onR
     setHistory(next)
     setSavedCurrent(true)
     try { localStorage.setItem('career-recommendation-history', JSON.stringify(next)) } catch {}
+    if (results.session_id) {
+      saveRoadmapProgress(results.session_id, {
+        doneSkills: Array.from(doneSkills),
+        categoryOrder,
+        skillOrders,
+        selectedProfession: activeProfName,
+      })
+        .then(() => getRecommendationHistory())
+        .then(data => setHistory(data.items || next))
+        .catch(() => {})
+    }
   }
 
   const openHistoryItem = item => {
@@ -1418,11 +1856,19 @@ export default function Results({ results: initialResults, formData, onBack, onR
     setSkillOrders(item.progress?.skillOrders || {})
     setTab('best')
     setSavedCurrent(true)
+    if (item.results?.session_id) {
+      getRecommendationState(item.results.session_id)
+        .then(state => {
+          if (state.filters) setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...state.filters })
+        })
+        .catch(() => {})
+    }
   }
 
   const clearHistory = () => {
     setHistory([])
     try { localStorage.removeItem('career-recommendation-history') } catch {}
+    clearRecommendationHistory().catch(() => {})
   }
 
   const moveCategory = (fromCat, toCat) => {
@@ -1453,30 +1899,67 @@ export default function Results({ results: initialResults, formData, onBack, onR
     })
   }
 
-  const startVoiceInput = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
+  const resizeChatInput = () => {
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) return
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + 'px'
+    })
+  }
+
+  const startVoiceInput = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
       setVoiceNotice(t.results.voiceUnsupported)
       return
     }
-    const recognition = new SpeechRecognition()
-    recognition.lang = lang === 'kk' ? 'kk-KZ' : lang === 'ru' ? 'ru-RU' : 'en-US'
-    recognition.interimResults = true
-    recognition.continuous = false
-    recognition.onstart = () => setListening(true)
-    recognition.onerror = () => setListening(false)
-    recognition.onend = () => setListening(false)
-    recognition.onresult = event => {
-      const transcript = Array.from(event.results).map(result => result[0]?.transcript || '').join(' ')
-      setInput(transcript)
+
+    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    if (window.isSecureContext === false && !isLocalhost) {
+      setVoiceNotice(t.results.voiceSecureContext)
+      return
     }
-    recognitionRef.current = recognition
-    recognition.start()
+
+    try {
+      voiceRecorderRef.current = await createWavRecorder()
+      setListening(true)
+      setVoiceNotice(t.results.voiceListening)
+    } catch (err) {
+      setListening(false)
+      if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') {
+        setVoiceNotice(t.results.voicePermission)
+      } else if (err?.name === 'NotFoundError') {
+        setVoiceNotice(t.results.voiceNoMic)
+      } else {
+        setVoiceNotice(t.results.voiceError)
+      }
+    }
   }
 
-  const stopVoiceInput = () => {
-    recognitionRef.current?.stop()
+  const stopVoiceInput = async () => {
+    const recorder = voiceRecorderRef.current
+    voiceRecorderRef.current = null
     setListening(false)
+    if (!recorder) return
+
+    try {
+      setVoiceNotice(t.results.voiceTranscribing)
+      const audio = await recorder.stop()
+      if (audio.rms < 0.004) {
+        setVoiceNotice(t.results.voiceNoSpeech)
+        return
+      }
+      const data = await transcribeVoice(audio.blob, lang)
+      const text = (data.text || '').trim()
+      if (!text) {
+        setVoiceNotice(t.results.voiceNoSpeech)
+        return
+      }
+      setInput(text)
+      setVoiceNotice('')
+      resizeChatInput()
+    } catch {
+      setVoiceNotice(t.results.voiceError)
+    }
   }
 
   const startChatResize = e => {
@@ -1947,7 +2430,21 @@ export default function Results({ results: initialResults, formData, onBack, onR
                   </div>
                 )}
               </div>
-              <ExplainabilityPanel profession={activeProf} rows={rows} profLabel={profLabel} t={t}/>
+              <ExplainabilityPanel
+                profession={activeProf}
+                rows={rows}
+                profLabel={profLabel}
+                t={t}
+                skillExplanation={selectedSkillExplanation}
+              />
+              <RecommendedCoursePanel
+                courses={allRoadmapCourses}
+                filters={courseFilters}
+                t={t}
+                onOpen={setActiveCourse}
+                onCopy={handleCopyCourse}
+                copiedMsg={copiedMsg}
+              />
               </div>
             )
           })()}
@@ -2016,6 +2513,13 @@ export default function Results({ results: initialResults, formData, onBack, onR
       </div>
     </div>
     <p className={styles.dragHint}>{t.results.dragHint}</p>
+    <CourseFilters
+      filters={courseFilters}
+      options={courseFilterOptions}
+      onChange={setCourseFilters}
+      onReset={resetCourseFilters}
+      t={t}
+    />
     <SkillDependencyTree roadmap={roadmapAdapted} doneSkills={doneSkills} formSkills={results._formData?.skills} t={t}/>
     <div className={styles.roadmap}>
       {orderedRoadmapEntries.map(([cat, skills]) => {
@@ -2066,7 +2570,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
               <div className={styles.skillList}>
                 {sorted.map((s, i) => {
                   const isDone = doneSkills.has(`${cat}::${s.skill}`)
-                  const visibleCourses = filterCoursesByLanguage(s.courses, lang)
+                  const visibleCourses = filterCourses(s.courses, courseFilters)
                   return (
                     <div
                       key={s.skill}
@@ -2125,34 +2629,17 @@ export default function Results({ results: initialResults, formData, onBack, onR
                       {!isDone && s.courses.length > 0 && (
                         <div className={styles.courses}>
                           {visibleCourses.length === 0 && (
-                            <div className={styles.courseFallback}>{t.results.noCourses}</div>
+                            <div className={styles.courseFallback}>{t.results.courseEmptyState || t.results.noCourses}</div>
                           )}
                           {visibleCourses.map((c, j) => (
-                            <div key={j} className={styles.courseWrap}>
-                              <div className={styles.course} style={{ cursor: 'pointer' }}
-                                onClick={() => setActiveCourse(c)}>
-                                <span className={styles.coursePlatform}>{c.platform}</span>
-                                <span className={styles.courseTitle}>{c.title}</span>
-                                <span className={styles.courseMeta}>
-                                  {c.rating && <span className={styles.courseRating}>★ {c.rating}</span>}
-                                  {c.reviews != null && (
-                                    <span className={styles.courseReviews}>
-                                      {Number(c.reviews).toLocaleString()} {t.results.reviews}
-                                    </span>
-                                  )}
-                                </span>
-                              </div>
-                              <button className={styles.courseCopyBtn}
-                                onClick={e => {
-                                  e.preventDefault()
-                                  const text = c.url ? `${c.title} (${c.platform}): ${c.url}` : `${c.title} (${c.platform})`
-                                  copyText(text)
-                                  setCopiedMsg(`course-${j}-${i}`)
-                                  setTimeout(() => setCopiedMsg(null), 2000)
-                                }}>
-                                {copiedMsg === `course-${j}-${i}` ? <CheckIcon/> : <CopyIcon/>}
-                              </button>
-                            </div>
+                            <CourseCard
+                              key={`${c.title}-${j}`}
+                              course={c}
+                              t={t}
+                              onOpen={setActiveCourse}
+                              copied={copiedMsg === `course-${j}-${i}`}
+                              onCopy={e => handleCopyCourse(e, c, `course-${j}-${i}`)}
+                            />
                           ))}
                         </div>
                       )}
@@ -2172,6 +2659,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
       </main>
 
       {/* ─ RIGHT CHAT ─ */}
+      {rightOpen && (
       <aside className={styles.chatSidebar} style={{ width: chatSize.width }}>
         <span className={styles.chatResizeHandle} onMouseDown={startChatResize}/>
         <div className={styles.chatHeader}>
@@ -2301,6 +2789,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
           </div>
         </div>
       </aside>
+      )}
 
       {/* ─ COURSE MODAL ─ */}
       {activeCourse && (

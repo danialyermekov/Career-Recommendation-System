@@ -103,6 +103,30 @@ Rules:
             if 'flash' in m.name.lower():
                 print(m.name)
 
+    def transcribe_audio(self, audio: bytes, mime_type: str, lang: str = "en") -> str:
+        """Transcribe a short voice input clip for the chat box."""
+        self.ensure_configured()
+        prompts = {
+            "ru": "Расшифруй голосовое сообщение на русском. Верни только распознанный текст без пояснений. Если это тишина, шум, музыка, тон или нет человеческой речи, верни пустую строку.",
+            "kk": "Қазақ тіліндегі дауыстық хабарламаны мәтінге айналдыр. Тек танылған мәтінді қайтар, түсіндірме қоспа. Егер бұл тыныштық, шу, музыка, дыбыс тоны немесе адам сөзі болмаса, бос жол қайтар.",
+            "en": "Transcribe this voice message. Return only the recognized text with no explanation. If this is silence, noise, music, a tone, or not human speech, return an empty string.",
+        }
+        response = self.client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=prompts.get(lang, prompts["en"])),
+                        types.Part.from_bytes(data=audio, mime_type=mime_type or "audio/wav"),
+                    ],
+                )
+            ],
+            config=types.GenerateContentConfig(max_output_tokens=256),
+        )
+        text = (response.text or "").strip()
+        return text.strip('"').strip()
+
     def chat(self, context: str, history: list, message: str) -> str:
         '''Generate a response from the LLM based on the provided context, conversation history, and user message.'''
         self.ensure_configured()

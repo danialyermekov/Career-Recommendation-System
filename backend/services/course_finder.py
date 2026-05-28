@@ -12,6 +12,117 @@ class CourseFinderService:
         with open(ROADMAP_PATH, 'r') as f:
             self.profession_profiles = json.load(f)
 
+    def _normalize_level(self, raw) -> str:
+        text = str(safe(raw) or '').strip().lower()
+        if text in {'0', '0.0'} or 'beginner' in text or 'нач' in text:
+            return 'Beginner'
+        if text in {'1', '1.0'} or 'intermediate' in text or 'сред' in text:
+            return 'Intermediate'
+        if text in {'2', '2.0'} or 'advanced' in text or 'продвин' in text or 'профессион' in text:
+            return 'Advanced'
+        if 'mixed' in text or 'all' in text or 'все' in text or 'любой' in text:
+            return 'Mixed'
+        return 'Mixed'
+
+    def _normalize_certificate(self, raw) -> bool:
+        text = str(safe(raw) or '').strip().lower()
+        return text in {'true', '1', 'yes', 'y', 'да', 'certificate', 'сертификат'}
+
+    def _detect_language(self, row) -> str:
+        if 'language' in row and safe(row.get('language')):
+            text = str(row.get('language')).strip().lower()
+            if text.startswith('en'):
+                return 'en'
+            if text.startswith('ru'):
+                return 'ru'
+            if text.startswith('kk') or text.startswith('kz'):
+                return 'kk'
+            return 'other'
+
+        text = f"{safe(row.get('title')) or ''} {safe(row.get('description')) or ''}"
+        if re.search(r'[ӘәҒғҚқҢңӨөҰұҮүҺһІі]', text):
+            return 'kk'
+        if re.search(r'[А-Яа-яЁё]', text):
+            return 'ru'
+        if re.search(r'[A-Za-z]', text):
+            return 'en'
+        return 'other'
+
+    def _infer_price_type(self, row) -> str:
+        for col in ('price_type', 'price', 'is_paid', 'is_free'):
+            if col not in row or pd.isna(row.get(col)):
+                continue
+            numeric = pd.to_numeric(row.get(col), errors='coerce')
+            if pd.notna(numeric):
+                if col == 'is_paid':
+                    return 'paid' if float(numeric) > 0 else 'free'
+                if col == 'is_free':
+                    return 'free' if float(numeric) > 0 else 'paid'
+                return 'free' if float(numeric) <= 0 else 'paid'
+            text = str(row.get(col)).strip().lower()
+            if text in {'free', '0', '0.0', 'false', 'no', 'бесплатно', 'тегін'}:
+                return 'free'
+            if text in {'paid', 'true', 'yes', 'платно', 'ақылы'}:
+                return 'paid'
+        platform = str(safe(row.get('platform')) or '').strip().lower()
+        if platform in {'udemy', 'udacity'}:
+            return 'paid'
+        if platform in {'stepik', 'coursera', 'edx'}:
+            return 'free'
+        return 'unknown'
+
+    def _normalize_price_amount(self, row):
+        if 'price' not in row or pd.isna(row.get('price')):
+            return None
+        numeric = pd.to_numeric(row.get('price'), errors='coerce')
+        if pd.isna(numeric):
+            return None
+        return round(float(numeric), 2)
+
+    def _serialize_course_row(self, row) -> dict:
+        level = self._normalize_level(row.get('difficulty'))
+        price_type = self._infer_price_type(row)
+        return {
+            'title': safe(row['title']),
+            'description': safe(row['description']),
+            'platform': safe(row['platform']),
+            'rating': round(float(safe(row.get('rating')) or 0), 2),
+            'reviews': int(safe(row.get('number_of_reviews')) or 0),
+            'difficulty': level,
+            'level': level,
+            'certificate': self._normalize_certificate(row.get('certificate')),
+            'course_url': safe(row.get('course_url')),
+            'language': self._detect_language(row),
+            'price_type': price_type,
+            'price': self._normalize_price_amount(row),
+        }
+
+    def _merge_course_lists(self, *course_lists: list, limit: int | None = None) -> list:
+        merged = []
+        seen = set()
+        for courses in course_lists:
+            for course in courses or []:
+                key = (
+                    str(course.get('title') or '').strip().lower(),
+                    str(course.get('platform') or '').strip().lower(),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(course)
+                if limit and len(merged) >= limit:
+                    return merged
+        return merged
+
+    def _find_courses_for_locale(self, skill: str, lang: str) -> list:
+        if lang == 'en':
+            primary = self._find_courses_en(skill)
+            secondary = self._find_courses_ru(skill)
+        else:
+            primary = self._find_courses_ru(skill)
+            secondary = self._find_courses_en(skill)
+        return self._merge_course_lists(primary, secondary, limit=TOP_N_COURSES * 2)
+
     def _find_courses_en(
         self,
         skill: str,
@@ -25,8 +136,6 @@ class CourseFinderService:
         
         skill_clean = skill.lower().replace('_', ' ')
         df = self.courses.copy()
-        diff_map = {0: 'Beginner', 1: 'Intermediate', 2: 'Advanced'}
-    
         df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna(0)
         df['number_of_reviews'] = pd.to_numeric(df['number_of_reviews'], errors='coerce').fillna(0)
         
@@ -65,20 +174,9 @@ class CourseFinderService:
         )
 
         df = df.drop_duplicates(subset=['title'], keep='first')
-        df['difficulty_label'] = df['difficulty'].map(diff_map)
-        df['difficulty_label'] = df['difficulty_label'].replace({pd.NA: None, float('nan'): None})
         results = []
         for _, row in df.head(top_n).iterrows():
-            results.append({
-                'title': safe(row['title']),
-                'description': safe(row['description']),
-                'platform': safe(row['platform']),
-                'rating': round(safe(row['rating']), 2),
-                'reviews': int(safe(row['number_of_reviews'])),
-                'difficulty': safe(row.get('difficulty_label')),
-                'certificate': safe(row.get('certificate')),
-                'course_url': safe(row.get('course_url'))
-            })
+            results.append(self._serialize_course_row(row))
 
         return results
 
@@ -132,16 +230,7 @@ class CourseFinderService:
                 if len(results) >= top_n:
                     break
                 if row['title'] not in used_titles:
-                    results.append({
-                        'title':       safe(row['title']),
-                        'description': safe(row['description']),
-                        'platform':    safe(row['platform']),
-                        'rating':      round(float(row['rating'] or 0), 2),
-                        'reviews':     int(row['number_of_reviews'] or 0),
-                        'course_url':  safe(row.get('course_url')),
-                        'difficulty':  safe(row.get('difficulty')),
-                        'certificate': safe(row.get('certificate')),
-                    })
+                    results.append(self._serialize_course_row(row))
                     used_titles.add(row['title'])
 
         return results
@@ -166,7 +255,7 @@ class CourseFinderService:
                 result[cat] = {}
                 for skill in skills:
                     result[cat][skill] = {
-                        'courses': self._find_courses_en(skill) if lang == 'en' else self._find_courses_ru(skill)
+                        'courses': self._find_courses_for_locale(skill, lang)
                     }
 
             return result, roadmap['full']

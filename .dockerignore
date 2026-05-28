@@ -1,7 +1,12 @@
 .git
 .gitignore
+.env
+.env.*
 .sixth
 ml
+backend/data/*.sqlite3
+backend/dev-server.*.log
+frontend/build
 backend/.venv
 frontend/node_modules
 frontend/build
