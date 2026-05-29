@@ -1,12 +1,13 @@
 .hero {
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: minmax(0, 760px) minmax(280px, 440px);
+  grid-template-columns: minmax(0, 680px) minmax(360px, 420px);
+  justify-content: center;
   align-items: center;
-  gap: clamp(28px, 6vw, 84px);
+  gap: clamp(40px, 8vw, 100px);
   position: relative;
   overflow: hidden;
-  padding: 112px clamp(20px, 6vw, 96px) 56px;
+  padding: 112px clamp(20px, 6vw, 64px) 56px;
 }
 
 .grid {
@@ -241,7 +242,7 @@
   position: relative;
   z-index: 1;
   width: min(100%, 420px);
-  justify-self: end;
+  justify-self: center;
   padding: 22px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);

@@ -41,10 +41,10 @@
   background: color-mix(in srgb, var(--bg) 42%, transparent);
   color: color-mix(in srgb, var(--accent) 88%, var(--text));
   font-weight: 800;
-  box-shadow: none;
-  opacity: .46;
+  box-shadow: var(--shadow-md);
+  opacity: .85;
   backdrop-filter: blur(14px);
-  transform: translateX(calc(100% - 46px));
+  transform: translateX(0);
   transition: opacity .18s ease, transform .2s cubic-bezier(.16,1,.3,1),
               background .18s ease, border-color .18s ease;
 }
@@ -52,7 +52,6 @@
 .aiFab:hover,
 .aiFab:focus-visible {
   opacity: .96;
-  transform: translateX(0);
   background: color-mix(in srgb, var(--accent) 14%, var(--bg));
   border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
 }
@@ -482,6 +481,7 @@
   background: var(--bg-secondary);
   border-color: var(--border-hover);
   transform: translateY(-1px);
+  z-index: 10;
 }
 
 .professionBarRow::after,
@@ -550,8 +550,8 @@
   position: absolute;
   inset: 0;
   display: flex;
-  opacity: .52;
-  mix-blend-mode: screen;
+  opacity: 0.9;
+  gap: 1px;
 }
 
 .professionBarFactors span {
@@ -669,6 +669,7 @@
 .gapCompareRow:hover {
   background: var(--bg-secondary);
   border-color: var(--border-hover);
+  z-index: 10;
 }
 
 .gapCompareName {
@@ -822,7 +823,7 @@
 
 .skillImpactTrack {
   position: relative;
-  height: 8px;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: var(--border);
@@ -834,12 +835,13 @@
   border-radius: inherit;
 }
 
-.skillImpactPositive { background: #4caf82; }
-.skillImpactNegative { background: #d96b6b; }
+.skillImpactPositive { background: linear-gradient(90deg, rgba(76, 175, 130, 0.65), #4caf82); }
+.skillImpactNegative { background: linear-gradient(90deg, rgba(217, 107, 107, 0.65), #d96b6b); }
 
 .skillImpactValue {
-  color: var(--text-3);
-  font-size: .7rem;
+  color: var(--text-2);
+  font-size: .75rem;
+  font-weight: 500;
   font-family: var(--font-mono);
   text-align: right;
 }
@@ -900,10 +902,6 @@
 }
 .profCard:hover { box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .profCardTop { border-color: var(--border-hover); background: var(--panel-strong); box-shadow: var(--shadow-sm); }
-
-.profHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.profRank { font-family: var(--font-mono); font-size: .75rem; color: var(--text-3); margin-right: 6px; }
-.profName { font-size: 1rem; font-weight: 600; color: var(--text); }
 
 /* ─── Score rows ─────────────────────────────────────────────── */
 .profScores {
@@ -1897,7 +1895,7 @@
     max-width: 44px;
     overflow: hidden;
     padding: 0 12px;
-    opacity: .5;
+    opacity: .7;
     transform: none;
   }
 

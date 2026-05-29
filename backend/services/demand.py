@@ -19,6 +19,16 @@ class DemandService:
         self.model = LGBMRegressor(**self.model_params, verbose=-1)
         self._cache = {}
 
+        # Precompute the trained model during startup to avoid retraining on every request
+        pred_date = self._get_prediction_date()
+        df_train = self.df[self.df['job_posted_date'] <= pred_date].copy()
+        df_features = demand_features(df_train)
+        df_features = df_features.dropna()
+        X_train = df_features.drop(columns=['vacancy_count'])
+        X_train_processed = self.preprocessor.transform(X_train)
+        y_train = df_features['vacancy_count']
+        self.model.fit(X_train_processed[self.features], y_train)
+
     def _get_prediction_date(self) -> pd.Timestamp:
         """
         Today's date is aligned to the end of the week (Sunday) of the year 2023 to ensure consistent demand predictions based on weekly trends. This allows us to provide stable and relevant demand scores for the professions, reflecting the most recent market conditions while avoiding fluctuations that can occur with daily data.
@@ -50,11 +60,8 @@ class DemandService:
 
         df_features = demand_features(df_train)
         df_features = df_features.dropna()
-        X_train = df_features.drop(columns=['vacancy_count'])
-        X_train_processed = self.preprocessor.transform(X_train)
-        y_train = df_features['vacancy_count']
 
-        self.model.fit(X_train_processed[self.features], y_train)
+        # Model is already fit during initialization, skip self.model.fit()
 
         last_rows = (
             df_features

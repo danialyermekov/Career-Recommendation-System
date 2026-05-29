@@ -25,7 +25,7 @@ ROADMAP_PATH  = MODELS_DIR / 'profession_profiles.json'
 COURSES_PATH  = DATA_DIR   / 'all_courses.csv'
 
 # Courses from Roadmap
-TOP_N_COURSES = 5
+TOP_N_COURSES = 1
 
 
 CLASS_NAMES = [
@@ -34,7 +34,7 @@ CLASS_NAMES = [
 ]
 
 # Scores for weighted scorer (top1 specialization)
-CLASSIFIER_COEF = 0.4
-SKILL_MATCHER_COEF = 0.4
-DEMAND_MARKET_SHARE_COEF = 0.05
-DEMAND_TREND_COEF = 0.15
+CLASSIFIER_COEF = 0.38
+SKILL_MATCHER_COEF = 0.35
+DEMAND_MARKET_SHARE_COEF = 0.07
+DEMAND_TREND_COEF = 0.20

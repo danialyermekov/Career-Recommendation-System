@@ -1,7 +1,7 @@
 from pathlib import Path
 from urllib.parse import unquote
-
-from fastapi import FastAPI, HTTPException, Request
+from typing import Any
+from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from schemas import StudentProfile, ChatRequest, RoadmapProgressRequest, CourseFilterPreferencesRequest
@@ -187,7 +187,7 @@ def recommend(profile: StudentProfile):
         skill_scores = skill_matcher_service.get_scores(profile.skills)
 
         # 2. Classifier 
-        profile_dict = profile.model_dump(exclude={'skills'})
+        profile_dict = profile.model_dump(exclude={'skills', 'lang'})
         classification_scores = classifier_service.get_scores(profile_dict)
         skill_explanations = (
             classifier_service.get_skill_explanations(
@@ -260,6 +260,22 @@ def recommend(profile: StudentProfile):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/courses/filter")
+def filter_courses(
+    skills_gaps: list[str] = Body(..., description="Плоский список навыков из gap"),
+    lang: str = Body("en", description="Язык фильтрации"),
+    filters: dict[str, Any] = Body(..., description="Словарь с выбранными фильтрами")
+):
+    course_finder_service = get_course_finder()
+    updated_courses = course_finder_service.update_courses_by_filters(
+        skills_gaps=skills_gaps, 
+        lang=lang, 
+        filters=filters
+    )
+    return {
+        "courses_by_skills": updated_courses
+    }
 
 
 @app.get('/recommendation/history')
@@ -421,7 +437,7 @@ def serve_frontend():
             status_code=404,
             detail='Frontend build not found. Build frontend or run it separately.',
         )
-    return FileResponse(index_path)
+    return FileResponse(index_path, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 @app.get('/{full_path:path}', include_in_schema=False)
@@ -436,4 +452,4 @@ def serve_frontend_routes(full_path: str):
     asset_path = _get_frontend_asset(full_path)
     if asset_path:
         return FileResponse(asset_path)
-    return FileResponse(index_path)
+    return FileResponse(index_path, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})

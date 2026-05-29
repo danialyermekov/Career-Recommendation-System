@@ -19,8 +19,8 @@ def make_course_finder(monkeypatch):
             "libraries": ["pytorch"],
         }
     }
-    service._find_courses_en = lambda skill: [{"title": f"{skill} English course"}]
-    service._find_courses_ru = lambda skill: [{"title": f"{skill} Russian course"}]
+    service._find_courses_en = lambda skill, *args, **kwargs: [{"title": f"{skill} English course"}]
+    service._find_courses_ru = lambda skill, *args, **kwargs: [{"title": f"{skill} Russian course"}]
 
     monkeypatch.setattr(course_finder_module, "generate_roadmap", fake_generate_roadmap)
     return service

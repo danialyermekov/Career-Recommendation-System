@@ -195,10 +195,17 @@ export const translations = {
       shapMethod: 'Local SHAP explanation from the classifier',
       shapFallback: 'Fallback: feature importance and counterfactual skill deltas',
       shapTooltip: 'Bars show how each skill moved the classifier score for the selected profession. Green increases confidence; red lowers it or marks a gap.',
-      skillImpactSummary: (prof, positive, negative) => `${positive} strengthened the recommendation for ${prof}. ${negative} is the main skill signal that lowered confidence or remains a gap.`,
-      skillPositiveText: (skill, magnitude, prof) => `${skill} ${magnitude} increased the probability of ${prof}.`,
-      skillMissingText: (skill, magnitude) => `${skill} is missing and ${magnitude} lowered the model confidence.`,
-      skillNegativeText: (skill, magnitude) => `${skill} ${magnitude} reduced the final classifier signal.`,
+      skillImpactSummary: (prof, positive, negative) => `Knowing "${positive}" strengthened the recommendation for ${prof}. And lacking "${negative}" is the main limiting factor.`,
+      skillPositiveText: (skill, magnitude, prof, isSoft, isPresent) => {
+        if (isSoft) return isPresent ? `A high score in "${skill}" ${magnitude} increased the model's score.` : `A low score in "${skill}" ${magnitude} increased the model's score.`
+        return isPresent ? `The presence of "${skill}" ${magnitude} increased the model's score.` : `The absence of "${skill}" ${magnitude} increased the model's score.`
+      },
+      skillMissingText: (skill, magnitude, prof, isSoft) => isSoft 
+        ? `A low score in "${skill}" ${magnitude} decreased the model's score.` 
+        : `The absence of "${skill}" ${magnitude} decreased the model's score.`,
+      skillNegativeText: (skill, magnitude, prof, isSoft) => isSoft 
+        ? `A high score in "${skill}" ${magnitude} decreased the final score.` 
+        : `The presence of "${skill}" ${magnitude} decreased the final score.`,
       impactMagnitude: { strongly: 'strongly', moderately: 'moderately', slightly: 'slightly' },
       topPositiveSkills: 'Top positive skills',
       topMissingSkills: 'Missing or negative skills',
@@ -473,10 +480,17 @@ export const translations = {
       shapMethod: 'Локальное SHAP-объяснение классификатора',
       shapFallback: 'Fallback: feature importance и counterfactual-оценка навыков',
       shapTooltip: 'Столбцы показывают, как каждый навык изменил score классификатора для выбранной профессии. Зеленый усиливает уверенность, красный снижает ее или показывает пробел.',
-      skillImpactSummary: (prof, positive, negative) => `${positive} усилил(и) рекомендацию ${prof}. ${negative} - главный сигнал, который снизил уверенность модели или выглядит как пробел.`,
-      skillPositiveText: (skill, magnitude, prof) => `${skill} ${magnitude} увеличил вероятность рекомендации ${prof}.`,
-      skillMissingText: (skill, magnitude) => `${skill} отсутствует и ${magnitude} снизил уверенность модели.`,
-      skillNegativeText: (skill, magnitude) => `${skill} ${magnitude} снизил итоговый сигнал классификатора.`,
+      skillImpactSummary: (prof, positive, negative) => `Знание «${positive}» усилило рекомендацию ${prof}. А нехватка «${negative}» — основной сдерживающий фактор.`,
+      skillPositiveText: (skill, magnitude, prof, isSoft, isPresent) => {
+        if (isSoft) return isPresent ? `Высокая оценка «${skill}» ${magnitude} повысила оценку модели.` : `Низкая оценка «${skill}» ${magnitude} повысила оценку модели.`
+        return isPresent ? `Наличие «${skill}» ${magnitude} повысило оценку модели.` : `Отсутствие «${skill}» ${magnitude} повысило оценку модели.`
+      },
+      skillMissingText: (skill, magnitude, prof, isSoft) => isSoft
+        ? `Низкая оценка «${skill}» ${magnitude} снизила оценку модели.`
+        : `Отсутствие «${skill}» ${magnitude} снизило оценку модели.`,
+      skillNegativeText: (skill, magnitude, prof, isSoft) => isSoft
+        ? `Высокий балл «${skill}» (отрицательный сигнал) ${magnitude} снизил итоговый балл.`
+        : `Наличие «${skill}» ${magnitude} снизило итоговый балл.`,
       impactMagnitude: { strongly: 'сильно', moderately: 'умеренно', slightly: 'слегка' },
       topPositiveSkills: 'Навыки, которые усилили рекомендацию',
       topMissingSkills: 'Пробелы или отрицательные сигналы',
@@ -751,10 +765,17 @@ export const translations = {
       shapMethod: 'Классификатордан алынған локалды SHAP түсіндірмесі',
       shapFallback: 'Fallback: feature importance және counterfactual дағды бағасы',
       shapTooltip: 'Бағандар әр дағды таңдалған мамандық score-ын қалай өзгерткенін көрсетеді. Жасыл сенімді арттырады, қызыл төмендетеді немесе пробелді көрсетеді.',
-      skillImpactSummary: (prof, positive, negative) => `${positive} ${prof} ұсынысын күшейтті. ${negative} модель сенімін төмендеткен немесе жетіспейтін негізгі сигнал.`,
-      skillPositiveText: (skill, magnitude, prof) => `${skill} ${prof} ықтималдығын ${magnitude} арттырды.`,
-      skillMissingText: (skill, magnitude) => `${skill} жоқ және модель сенімін ${magnitude} төмендетті.`,
-      skillNegativeText: (skill, magnitude) => `${skill} классификатор сигналын ${magnitude} төмендетті.`,
+      skillImpactSummary: (prof, positive, negative) => `«${positive}» білуі ${prof} ұсынысын күшейтті. Ал «${negative}» болмауы — негізгі тежеуші фактор.`,
+      skillPositiveText: (skill, magnitude, prof, isSoft, isPresent) => {
+        if (isSoft) return isPresent ? `«${skill}» жоғары бағасы модель бағасын ${magnitude} көтерді.` : `«${skill}» төмен бағасы модель бағасын ${magnitude} көтерді.`
+        return isPresent ? `«${skill}» бар болуы модель бағасын ${magnitude} көтерді.` : `«${skill}» болмауы модель бағасын ${magnitude} көтерді.`
+      },
+      skillMissingText: (skill, magnitude, prof, isSoft) => isSoft
+        ? `«${skill}» төмен бағасы модель бағасын ${magnitude} төмендетті.`
+        : `«${skill}» болмауы модель бағасын ${magnitude} төмендетті.`,
+      skillNegativeText: (skill, magnitude, prof, isSoft) => isSoft
+        ? `«${skill}» жоғары бағасы қорытынды балды ${magnitude} төмендетті.`
+        : `«${skill}» бар болуы қорытынды балды ${magnitude} төмендетті.`,
       impactMagnitude: { strongly: 'қатты', moderately: 'орташа', slightly: 'сәл' },
       topPositiveSkills: 'Ұсынысты күшейткен дағдылар',
       topMissingSkills: 'Жетіспейтін немесе теріс сигналдар',

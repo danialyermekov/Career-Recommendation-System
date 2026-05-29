@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 import styles from './Results.module.css'
 import {
@@ -9,6 +9,7 @@ import {
   saveRoadmapProgress,
   sendChatStream,
   transcribeVoice,
+  filterCourses as fetchFilteredCourses
 } from '../utils/api';
 /* ─── Constants ─────────────────────────────────────────────── */
 const CATEGORY_ICONS = {
@@ -470,6 +471,8 @@ function ProfessionBarsChart({ professions, rows, profLabel, t, animKey, onSelec
                       style={{
                         width: `${Math.max(3, pct(p[r.key], r.max) / rows.length)}%`,
                         background: BAR_COLORS[r.key],
+                        opacity: 0.85,
+                        boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.1)'
                       }}
                     />
                   ))}
@@ -632,9 +635,11 @@ function SkillImpactChart({ explanation, profName, t }) {
   const methodText = explanation.method === 'catboost_shap' ? t.results.shapMethod : t.results.shapFallback
   const magnitude = item => t.results.impactMagnitude?.[item.magnitude] || item.magnitude
   const itemText = item => {
-    if (item.direction === 'positive') return t.results.skillPositiveText?.(item.skill, magnitude(item), profName) || item.text
-    if (item.direction === 'missing') return t.results.skillMissingText?.(item.skill, magnitude(item), profName) || item.text
-    return t.results.skillNegativeText?.(item.skill, magnitude(item), profName) || item.text
+    const isSoft = ['communication', 'leadership', 'problem_solving', 'teamwork', 'adaptability'].includes(item.feature)
+    const isPresent = !!item.present
+    if (item.direction === 'positive') return t.results.skillPositiveText?.(item.skill, magnitude(item), profName, isSoft, isPresent) || item.text
+    if (item.direction === 'missing') return t.results.skillMissingText?.(item.skill, magnitude(item), profName, isSoft, isPresent) || item.text
+    return t.results.skillNegativeText?.(item.skill, magnitude(item), profName, isSoft, isPresent) || item.text
   }
 
   return (
@@ -689,16 +694,8 @@ function SkillImpactChart({ explanation, profName, t }) {
   )
 }
 
-function ExplainabilityPanel({ profession, rows, profLabel, t, skillExplanation }) {
+function ExplainabilityPanel({ profession, profLabel, t, skillExplanation }) {
   if (!profession) return null
-  const contributions = rows
-    .filter(row => profession[row.key] != null)
-    .map(row => {
-      const weight = row.key === 'trend_score' ? 0.15 : row.key === 'market_share' ? 0.05 : 0.4
-      return { ...row, contribution: pct(profession[row.key], row.max) * weight }
-    })
-    .sort((a, b) => b.contribution - a.contribution)
-  const maxContribution = Math.max(...contributions.map(item => item.contribution), 1)
 
   return (
     <section className={styles.explainCard}>
@@ -710,20 +707,6 @@ function ExplainabilityPanel({ profession, rows, profLabel, t, skillExplanation 
         {t.results.whyTop ? t.results.whyTop(profLabel(profession.name)) : profLabel(profession.name)}
       </p>
       <SkillImpactChart explanation={skillExplanation} profName={profLabel(profession.name)} t={t}/>
-      <div className={styles.explainFactors}>
-        {contributions.map(item => (
-          <div key={item.key} className={styles.explainFactor}>
-            <div className={styles.explainFactorTop}>
-              <span>{item.label}</span>
-              <strong>{pct(profession[item.key], item.max)}%</strong>
-            </div>
-            <div className={styles.explainFactorTrack}>
-              <span style={{ width: `${Math.round(item.contribution / maxContribution * 100)}%`, background: BAR_COLORS[item.key] }}/>
-            </div>
-            <p>{t.results.factorTexts?.[item.key]}</p>
-          </div>
-        ))}
-      </div>
     </section>
   )
 }
@@ -777,7 +760,7 @@ function SkillDependencyTree({ roadmap, doneSkills, formSkills, t }) {
   )
 }
 
-function CourseFilters({ filters, options, onChange, onReset, t }) {
+function CourseFilters({ filters, options, onChange, onReset, loading, t }) {
   const labels = t.results.courseFilters
   const languageLabels = t.results.courseLanguages || {}
   const activeCount = activeCourseFilterCount(filters)
@@ -786,7 +769,7 @@ function CourseFilters({ filters, options, onChange, onReset, t }) {
     .filter((value, index, arr) => arr.indexOf(value) === index)
   const levelOptions = ['Beginner', 'Intermediate', 'Advanced', 'Mixed', ...(options.levels || [])]
     .filter((value, index, arr) => arr.indexOf(value) === index)
-  const platformOptions = ['Coursera', 'Udemy', 'edX', ...(options.platforms || [])]
+  const platformOptions = ['Coursera', 'Stepik', 'Udemy', 'edX', 'Udacity', ...(options.platforms || [])]
     .filter(Boolean)
     .filter((value, index, arr) => arr.findIndex(item => normalizeFilterValue(item) === normalizeFilterValue(value)) === index)
 
@@ -794,7 +777,11 @@ function CourseFilters({ filters, options, onChange, onReset, t }) {
     <section className={styles.courseFilterPanel}>
       <div className={styles.compareHeader}>
         <span>{labels.title}</span>
-        <small>{labels.active(activeCount)}</small>
+        <small>
+          {loading
+            ? <span style={{ opacity: 0.6, fontStyle: 'italic' }}>...</span>
+            : labels.active(activeCount)}
+        </small>
       </div>
       <div className={styles.courseFilterGrid}>
         <label>
@@ -886,7 +873,7 @@ function RecommendedCoursePanel({ courses, filters, t, onOpen, onCopy, copiedMsg
     <section className={styles.recommendedCoursesPanel}>
       <div className={styles.compareHeader}>
         <span>{t.results.courses}</span>
-        <small>{visible.length}/{courses.length}</small>
+        <small>{visible.length}</small>
       </div>
       {visible.length === 0 ? (
         <div className={styles.courseEmptyState}>{t.results.courseEmptyState}</div>
@@ -1035,23 +1022,30 @@ while (changed) {
 }
 
   const studentHas = (skillKey) => {
-  if (studentNorm.has(skillKey)) return true
+    if (studentNorm.has(skillKey)) return true
 
-  const bare = s => s.replace(/[_\d]/g, '').trim()
-  const bareKey = bare(skillKey)
+    const bare = s => s.replace(/[^a-z0-9]/g, '').trim()
+    const bareKey = bare(skillKey)
 
-  for (const sk of studentNorm) {
-    const bareSk = bare(sk)
-    if (!bareSk || bareSk.length < 3) continue
-    if (
-      bareKey === bareSk ||
-      bareKey.includes(bareSk) ||
-      bareSk.includes(bareKey) ||
-      skillKey.split('_')[0] === sk.split('_')[0]
-    ) return true
+    for (const sk of studentNorm) {
+      const bareSk = bare(sk)
+      if (!bareSk) continue
+
+      // For specific short or platform-specific terms, enforce strict matching
+      if (['sql', 'git', 'go', 'r', 'aws', 'gcp'].includes(bareSk)) {
+        if (bareKey === bareSk) return true;
+        continue;
+      }
+
+      if (
+        bareKey === bareSk ||
+        bareKey.includes(bareSk) ||
+        bareSk.includes(bareKey) ||
+        skillKey.split('_')[0] === sk.split('_')[0]
+      ) return true
+    }
+    return false
   }
-  return false
-}
 
   const professionSummary = getProfessionRoadmapSummary(results, profession || results?.top_profession)
   const fullRoadmap = professionSummary.full || {}
@@ -1422,6 +1416,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const [voiceNotice, setVoiceNotice] = useState('')
   const [chatSize, setChatSize] = useState({ width: 360, height: null })
   const [courseFilters, setCourseFilters] = useState(COURSE_FILTER_DEFAULTS)
+  const [filteredRoadmap, setFilteredRoadmap] = useState(null)   // ← overrides rawRoadmap courses when filters are active
+  const [filterLoading,  setFilterLoading]  = useState(false)
 
   const messagesEndRef = useRef(null)
   const greetedRef     = useRef(false)
@@ -1436,7 +1432,6 @@ export default function Results({ results: initialResults, formData, onBack, onR
   }, [initialResults])
 
   const top_profession = results.top_profession
-  const rawRoadmap     = results.roadmap_with_courses
   const resultStorageKey = `career-result:${results.session_id || top_profession || 'local'}`
   const profLabel = name => t.professions?.[name] || name
   const catLabel = cat => t.categories?.[cat] || cat.replace(/_/g, ' ')
@@ -1488,8 +1483,13 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const activeProfName = selectedProf || top_profession
   const activeProf     = sorted.find(p => p.name === activeProfName) || sorted[0]
 
+  const rawRoadmap = results?.roadmaps_by_profession?.[activeProfName]?.roadmap_with_courses || results.roadmap_with_courses
+
+  // filteredRoadmap (from backend) takes priority over rawRoadmap when filters are active
+  const activeRoadmapSource = filteredRoadmap ?? rawRoadmap
+
   const roadmapAdapted = Object.fromEntries(
-    Object.entries(rawRoadmap || {}).map(([cat, skills]) => [
+    Object.entries(activeRoadmapSource || {}).map(([cat, skills]) => [
       cat,
       Object.entries(skills).map(([skill, data]) => ({
         skill,
@@ -1655,6 +1655,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
     return next
   })
 
+  
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -1805,7 +1806,97 @@ export default function Results({ results: initialResults, formData, onBack, onR
     setTimeout(() => setCopiedMsg(null), 2000)
   }
 
-  const resetCourseFilters = () => setCourseFilters(COURSE_FILTER_DEFAULTS)
+  const resetCourseFilters = () => {
+    setCourseFilters(COURSE_FILTER_DEFAULTS)
+    setFilteredRoadmap(null)
+  }
+
+  // Convert frontend filter shape -> backend _apply_dynamic_filters shape
+  const toBackendFilters = (filters) => {
+    const out = {}
+    if (filters.price !== 'all')           out.price_types     = [filters.price]
+    if (filters.language !== 'all')        out.languages        = [filters.language]
+    if (filters.platform !== 'all')        out.platforms        = [filters.platform]
+    if (filters.level !== 'all')           out.levels           = [filters.level]
+    if (filters.certificate === 'with')    out.has_certificate  = true
+    if (filters.certificate === 'without') out.has_certificate  = false
+    return out
+  }
+
+  // Flat list of gap skills (all skill keys from rawRoadmap)
+  const gapSkillsList = useMemo(() => {
+    return rawRoadmap
+      ? Object.values(rawRoadmap).flatMap(catSkills => Object.keys(catSkills))
+      : []
+  }, [rawRoadmap])
+
+  useEffect(() => {
+    const isDefault = Object.keys(COURSE_FILTER_DEFAULTS).every(
+      k => courseFilters[k] === COURSE_FILTER_DEFAULTS[k]
+    )
+    if (isDefault) {
+      console.log("[CourseFilter] filters are default, resetting filtered roadmap");
+      setFilteredRoadmap(null)
+      return
+    }
+    if (!gapSkillsList.length) {
+      console.log("[CourseFilter] gapSkillsList is empty, skipping filter request");
+      return
+    }
+
+    let cancelled = false
+    setFilterLoading(true)
+
+    const backendFilters = toBackendFilters(courseFilters);
+    console.log("[CourseFilter] sending request to backend:", {
+      skills_gaps: gapSkillsList,
+      filters: backendFilters,
+      lang: lang
+    });
+
+    fetchFilteredCourses(
+      gapSkillsList,
+      backendFilters,
+      lang
+    )
+      .then(data => {
+        if (cancelled) {
+          console.log("[CourseFilter] request was cancelled/superseded");
+          return
+        }
+        console.log("[CourseFilter] received data from backend:", data);
+        if (data?.courses_by_skills && rawRoadmap) {
+          const merged = Object.fromEntries(
+            Object.entries(rawRoadmap).map(([cat, catSkills]) => [
+              cat,
+              Object.fromEntries(
+                Object.entries(catSkills).map(([skill, skillData]) => {
+                  const backendKey = Object.keys(data.courses_by_skills || {}).find(
+                    k => k.toLowerCase() === skill.toLowerCase()
+                  )
+                  const newCourses = backendKey ? data.courses_by_skills[backendKey] : []
+                  return [
+                    skill,
+                    { ...skillData, courses: newCourses },
+                  ]
+                })
+              ),
+            ])
+          )
+          console.log("[CourseFilter] successfully merged and set filtered roadmap:", merged);
+          setFilteredRoadmap(merged)
+        }
+      })
+      .catch(err => {
+        if (cancelled) return
+        console.warn('[CourseFilter] backend error, fallback to client-side filtering:', err)
+        setFilteredRoadmap(null)
+      })
+      .finally(() => { if (!cancelled) setFilterLoading(false) })
+
+    return () => { cancelled = true }
+  /* eslint-disable-next-line */
+  }, [courseFilters, lang, gapSkillsList, rawRoadmap])
 
   const handleShare = () => {
     const text = `${t.results.selectedCareer}: ${profLabel(top_profession)} ${activeProf?.final_score ? Math.round(activeProf.final_score * 100) + '%' : ''} - CareerPath`
@@ -2432,18 +2523,9 @@ export default function Results({ results: initialResults, formData, onBack, onR
               </div>
               <ExplainabilityPanel
                 profession={activeProf}
-                rows={rows}
                 profLabel={profLabel}
                 t={t}
                 skillExplanation={selectedSkillExplanation}
-              />
-              <RecommendedCoursePanel
-                courses={allRoadmapCourses}
-                filters={courseFilters}
-                t={t}
-                onOpen={setActiveCourse}
-                onCopy={handleCopyCourse}
-                copiedMsg={copiedMsg}
               />
               </div>
             )
@@ -2518,6 +2600,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
       options={courseFilterOptions}
       onChange={setCourseFilters}
       onReset={resetCourseFilters}
+      loading={filterLoading}
       t={t}
     />
     <SkillDependencyTree roadmap={roadmapAdapted} doneSkills={doneSkills} formSkills={results._formData?.skills} t={t}/>
@@ -2570,7 +2653,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
               <div className={styles.skillList}>
                 {sorted.map((s, i) => {
                   const isDone = doneSkills.has(`${cat}::${s.skill}`)
-                  const visibleCourses = filterCourses(s.courses, courseFilters)
+                  const visibleCourses = filterCourses(s.courses || [], courseFilters);
                   return (
                     <div
                       key={s.skill}

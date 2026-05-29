@@ -1,0 +1,156 @@
+Metadata-Version: 2.4
+Name: diploma
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: <3.14,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: catboost>=1.2.10
+Requires-Dist: dotenv>=0.9.9
+Requires-Dist: fastapi>=0.136.1
+Requires-Dist: google>=3.0.0
+Requires-Dist: google-genai>=1.75.0
+Requires-Dist: google-generativeai>=0.8.6
+Requires-Dist: joblib>=1.5.3
+Requires-Dist: lightgbm>=4.6.0
+Requires-Dist: openai>=2.34.0
+Requires-Dist: pandas>=3.0.2
+Requires-Dist: pymupdf>=1.26.0
+Requires-Dist: python-dotenv>=1.2.2
+Requires-Dist: scikit-learn>=1.8.0
+Requires-Dist: uvicorn>=0.46.0
+Provides-Extra: dev
+Requires-Dist: httpx>=0.27.0; extra == "dev"
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+
+# IT Career Advisor API
+
+An intelligent, machine-learning-powered backend service designed to provide personalized IT career guidance. The system analyzes a student's profile, skill set, and market demand to recommend the most optimal IT profession. Additionally, it features an interactive career advisor chat powered by Large Language Models (LLMs) to guide the user along a personalized learning roadmap.
+
+---
+
+##  Key Features
+
+*   **Intelligent Career Matching**: Uses a pre-trained **CatBoost** classifier to predict the best-fit profession based on the user's background, GPA, and domain knowledge (Python, C++, SQL, Machine Learning, etc.).
+*   **Skill Assessment**: Ranks and matches users' skills against standard industry profiles.
+*   **Market Demand Evaluation**: Employs a **LightGBM** regressor trained on real-world vacancy data to weight recommendations based on current job market trends.
+*   **Personalized Roadmaps & Courses**: Automatically generates tailored learning roadmaps and curates course recommendations to cover skill gaps.
+*   **LLM-Powered Interactive Chat**: Leverages **Google Gemini** to simulate an expert AI career advisor that provides natural-language guidance and answers questions in real-time, backed by the generated recommendation context.
+*   **FastAPI Backend**: Built asynchronously on FastAPI, ensuring fast, robust, and scalable API endpoints.
+
+---
+
+##  Project Structure
+
+```text
+diploma/
+├── data/                     # Datasets (courses_combined.csv # Combined of 4 courses dataset (only russian and english languages are left), 
+vacancy_data.csv # weekly aggergation of data_jobs dataset)
+├── models/                   # Serialized ML models, vectorizers, and JSON data
+│   ├── classifier_model.joblib
+│   ├── demand_model_params.json
+│   ├── tfidf_vectorizer.joblib
+│   └── ...                   # Preprocessors, taxonomy data, etc.
+├── services/                 # Core domain services
+│   ├── classifier.py         # Classifier ML model wrapper (CatBoost)
+│   ├── course_finder.py      # Roadmap and course extraction logic
+│   ├── demand.py             # Market demand computation (LightGBM)
+│   ├── llm.py                # LLM context builder and chat handler (Gemini)
+│   └── skill_matcher.py      # Skill comparison and scoring logic
+├── tests/                    # Pytest test cases validating API limits & logic
+│   ├── test_api.py
+│   └── test_recommendations.py
+├── utils/                    # Utility scripts (type checking, conversions)
+├── config.py                 # Centralized configuration (Paths, Constants)
+├── features.py               # Feature engineering logic for ML inference
+├── main.py                   # FastAPI Application Entry Point
+├── pyproject.toml            # Project dependencies and configurations
+├── roadmap.py                # Roadmap generation algorithms
+├── schemas.py                # Pydantic data models for API requests/responses
+└── top_profession.py         # Final aggregation and weighting algorithm
+```
+
+---
+
+##  Prerequisites & Dependencies
+
+The project requires **Python 3.10+** (specifically tested with python >= 3.14 specified in `pyproject.toml`).
+
+**Core Libraries:**
+*   [FastAPI](https://fastapi.tiangolo.com/) & [Uvicorn](https://www.uvicorn.org/) for building the REST API
+*   [CatBoost](https://catboost.ai/) & [LightGBM](https://lightgbm.readthedocs.io/) for Machine Learning predictive modeling
+*   [Scikit-learn](https://scikit-learn.org/) for NLP (TF-IDF) and preprocessing pipelines
+*   [Google Generative AI](https://pypi.org/project/google-generativeai/) for the LLM chatbot integrations
+*   [Pandas](https://pandas.pydata.org/) for data manipulation and alignment
+
+---
+
+##  Installation & Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone <your-repo-url>
+   cd diploma
+   ```
+
+2. **Set up a Virtual Environment:**
+   ```bash
+   python -m venv .venv
+   # On Windows:
+   .venv\Scripts\Activate.ps1
+   # On macOS/Linux:
+   source .venv/bin/activate
+   ```
+
+3. **Install Dependencies:**
+   Install required packages via standard tools or from `pyproject.toml`:
+   ```bash
+   pip install .
+   ```
+
+4. **Set Up Environment Variables:**
+   Create a `.env` file in the project root to configure secrets for the LLM:
+   ```env
+   API_KEY=your_google_gemini_api_key
+   ```
+
+---
+
+##  Running the Application
+
+**Start the Development Server:**
+To run the FastAPI server, use Uvicorn running `main:app`.
+```bash
+uvicorn main:app --reload --port 8000
+```
+The interactive Swagger API documentation will be available at: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+**Running Tests:**
+To ensure your endpoints and recommendation logic are working correctly, run the built-in Pytest suite:
+```bash
+pytest tests/ -v
+```
+
+---
+
+##  API Endpoints
+
+### `GET /health`
+*   **Description**: Basic health check to confirm the service is live.
+*   **Response**: `{"status": "ok"}`
+
+### `POST /recommend`
+*   **Description**: Evaluates a `StudentProfile` payload and returns the recommended IT profession, skill gap roadmap, course recommendations, and initiates an LLM session context.
+*   **Payload Example**: Defines skills (e.g. `['Python', 'SQL']`), academic details (GPA, Field of Study), and quantified proficiencies across various IT branches.
+*   **Response**: A detailed JSON object including `top_profession`, `final_scores`, skill analytics, course roadmaps, and a generated `session_id`.
+
+### `POST /chat`
+*   **Description**: Engage with the AI career advisor using a previously generated `session_id`. The advisor provides natural-language guidance informed by the student's exact learning gaps and recommended courses.
+*   **Payload**: Requires `session_id`, `history` (array of prior message objects), and the user's current `message`.
+
+---
+
+##  Under the Hood (Machine Learning)
+
+*   **Classifier Service**: A trained CatBoost multi-class categorization model predicts the likelihood of various target IT professions (e.g., Data Engineer, Software Engineer, Cloud Analyst). It leverages a dedicated preprocessor to scale inputs like GPA, proficiency indicators, and categorical academic backgrounds.
+*   **Demand Service**: Evaluates how hot the job market is for specific roles. Uses historical scrape data aligned with recent trends, modeled via a LightGBM regressor using Lasso-selected features.
+*   **Skill Matcher & Course Finder**: Evaluates technical and soft-skill overlaps to compute a precise gap. Suggests course links specifically targeted at the missing skills for the optimal role.

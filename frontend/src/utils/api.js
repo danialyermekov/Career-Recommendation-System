@@ -3,12 +3,10 @@ function getBaseUrl() {
     return process.env.REACT_APP_API_URL
   }
 
-  if (
-    typeof window !== 'undefined' &&
-    ['localhost', '127.0.0.1'].includes(window.location.hostname) &&
-    window.location.port === '3000'
-  ) {
-    return 'http://localhost:8000'
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    if (window.location.port !== '8000' && window.location.port !== '') {
+      return 'http://localhost:8000'
+    }
   }
 
   return ''
@@ -122,5 +120,22 @@ export async function saveCourseFilterPreferences(sessionId, filters) {
     body: JSON.stringify({ filters }),
   })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+}
+
+export async function filterCourses(skillsGaps, filters, lang = 'en') {
+  const res = await fetch(`${BASE}/courses/filter`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      skills_gaps: skillsGaps,
+      filters: filters,
+      lang: lang,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `API error: ${res.status}`)
+  }
   return res.json()
 }

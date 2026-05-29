@@ -7,9 +7,10 @@ name = "diploma"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11, <3.14"
 dependencies = [
     "catboost>=1.2.10",
+    "dotenv>=0.9.9",
     "fastapi>=0.136.1",
     "google>=3.0.0",
     "google-genai>=1.75.0",

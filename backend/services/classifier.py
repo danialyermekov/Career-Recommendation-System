@@ -157,22 +157,30 @@ class ClassifierService:
         importance_weights = self._skill_importance_weights()
         explanations = {}
 
+        # Precompute toggled scores once for all skills (avoid redundant get_scores calls in outer professions loop)
+        toggled_scores_by_skill = {}
+        for skill in SKILL_FEATURE_LABELS:
+            if skill not in profile:
+                continue
+            toggled = dict(profile)
+            current = profile.get(skill, 0)
+            if skill in {"communication", "leadership", "problem_solving", "teamwork", "adaptability"}:
+                toggled[skill] = 1 if float(current or 0) > 1 else 5
+            else:
+                toggled[skill] = 0 if int(current or 0) else 1
+            try:
+                toggled_scores_by_skill[skill] = self.get_scores(toggled)
+            except Exception:
+                toggled_scores_by_skill[skill] = base_probs
+
         for profession in professions:
             base = float(base_probs.get(profession, 0) or 0)
             contributions = {}
             for skill in SKILL_FEATURE_LABELS:
                 if skill not in profile:
                     continue
-                toggled = dict(profile)
-                current = profile.get(skill, 0)
-                if skill in {"communication", "leadership", "problem_solving", "teamwork", "adaptability"}:
-                    toggled[skill] = 1 if float(current or 0) > 1 else 5
-                else:
-                    toggled[skill] = 0 if int(current or 0) else 1
-                try:
-                    changed = float(self.get_scores(toggled).get(profession, 0) or 0)
-                except Exception:
-                    changed = base
+                changed_probs = toggled_scores_by_skill.get(skill, base_probs)
+                changed = float(changed_probs.get(profession, 0) or 0)
                 contribution = base - changed
                 contributions[skill] = contribution * importance_weights.get(skill, 1.0)
 
@@ -186,30 +194,46 @@ class ClassifierService:
         return explanations
 
     def _skill_importance_weights(self) -> dict[str, float]:
-        try:
-            X_dummy, feature_names = self._prepare_features({
-                "field_of_study": "Computer Science",
-                "gpa": 3.0,
-                **{skill: 0 for skill in SKILL_FEATURE_LABELS},
-                "communication": 3,
-                "leadership": 3,
-                "problem_solving": 3,
-                "teamwork": 3,
-                "adaptability": 3,
-            })
-            if hasattr(self.model, "get_feature_importance"):
-                raw = np.asarray(self.model.get_feature_importance(), dtype=float)
-            else:
-                raw = np.asarray(getattr(self.model, "feature_importances_", []), dtype=float)
-            if raw.size != len(feature_names) or raw.size == 0:
-                return {}
-            grouped = self._aggregate_skill_values(raw, feature_names, absolute=True)
-            max_value = max(grouped.values()) if grouped else 0
-            if max_value <= 0:
-                return {}
-            return {skill: 0.45 + 0.55 * (value / max_value) for skill, value in grouped.items()}
-        except Exception:
-            return {}
+        if not hasattr(self, '_cached_importance_weights') or self._cached_importance_weights is None:
+            try:
+                X_dummy, feature_names = self._prepare_features({
+                    "field_of_study": "Computer Science",
+                    "gpa": 3.0,
+                    **{skill: 0 for skill in SKILL_FEATURE_LABELS},
+                    "communication": 3,
+                    "leadership": 3,
+                    "problem_solving": 3,
+                    "teamwork": 3,
+                    "adaptability": 3,
+                })
+                if hasattr(self.model, "get_feature_importance"):
+                    raw = np.asarray(self.model.get_feature_importance(), dtype=float)
+                elif hasattr(self.model, "feature_importances_"):
+                    raw = np.asarray(self.model.feature_importances_, dtype=float)
+                elif hasattr(self.model, "calibrated_classifiers_"):
+                    clf = self.model.calibrated_classifiers_[0]
+                    base_estimator = clf.base_estimator
+                    if hasattr(base_estimator, "feature_importances_"):
+                        raw = np.asarray(base_estimator.feature_importances_, dtype=float)
+                    elif hasattr(base_estimator, "get_feature_importance"):
+                        raw = np.asarray(base_estimator.get_feature_importance(), dtype=float)
+                    else:
+                        raw = np.array([])
+                else:
+                    raw = np.asarray(getattr(self.model, "feature_importances_", []), dtype=float)
+
+                if raw.size != len(feature_names) or raw.size == 0:
+                    self._cached_importance_weights = {}
+                else:
+                    grouped = self._aggregate_skill_values(raw, feature_names, absolute=True)
+                    max_value = max(grouped.values()) if grouped else 0
+                    if max_value <= 0:
+                        self._cached_importance_weights = {}
+                    else:
+                        self._cached_importance_weights = {skill: 0.45 + 0.55 * (value / max_value) for skill, value in grouped.items()}
+            except Exception:
+                self._cached_importance_weights = {}
+        return self._cached_importance_weights
 
     def _aggregate_skill_values(
         self,
