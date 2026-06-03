@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import re
 import json
+import threading
 from typing import Any
 from roadmap import generate_roadmap
 from config import COURSES_PATH, ROADMAP_PATH, TOP_N_COURSES
@@ -12,6 +13,9 @@ class CourseFinderService:
         self.courses = pd.read_csv(COURSES_PATH)
         with open(ROADMAP_PATH, 'r') as f:
             self.profession_profiles = json.load(f)
+        # Thread-safe in-memory cache for course matching
+        self._cache_lock = threading.Lock()
+        self._course_cache = {}
         # Precompute the prepared dataframe once at startup
         self._df_prepared = self._prepare_base_dataframe()
 
@@ -140,13 +144,36 @@ class CourseFinderService:
         return merged
 
     def _find_courses_for_locale(self, skill: str, lang: str, filters: dict[str, Any] | None = None) -> list:
+        # Convert filters dict to a hashable type for robust cache lookup
+        filters_key = None
+        if filters:
+            def make_hashable(val):
+                if isinstance(val, list):
+                    return tuple(make_hashable(item) for item in val)
+                if isinstance(val, dict):
+                    return frozenset((k, make_hashable(v)) for k, v in val.items())
+                return val
+            filters_key = frozenset((k, make_hashable(v)) for k, v in filters.items() if v is not None)
+            
+        cache_key = (skill, lang, filters_key)
+        
+        with self._cache_lock:
+            if cache_key in self._course_cache:
+                return self._course_cache[cache_key]
+
         if lang == 'en':
             primary = self._find_courses_en(skill, filters=filters)
             secondary = self._find_courses_ru(skill, filters=filters)
         else:
             primary = self._find_courses_ru(skill, filters=filters)
             secondary = self._find_courses_en(skill, filters=filters)
-        return self._merge_course_lists(primary, secondary, limit=TOP_N_COURSES)
+            
+        result = self._merge_course_lists(primary, secondary, limit=TOP_N_COURSES)
+        
+        with self._cache_lock:
+            self._course_cache[cache_key] = result
+            
+        return result
 
     def _prepare_base_dataframe(self) -> pd.DataFrame:
         """Предварительно вычисляет базовые признаки для фильтрации и ранжирования."""
@@ -154,16 +181,24 @@ class CourseFinderService:
             if not hasattr(self, 'courses') or self.courses is None:
                 return pd.DataFrame()
             df = self.courses.copy()
-            df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna(0)
-            df['number_of_reviews'] = pd.to_numeric(df['number_of_reviews'], errors='coerce').fillna(0)
+            # Downcast ratings and review counts to minimize memory footprint and speed up calculations
+            df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna(0).astype(np.float32)
+            df['number_of_reviews'] = pd.to_numeric(df['number_of_reviews'], errors='coerce').fillna(0).astype(np.int32)
             df['_title_lower'] = df['title'].str.lower()
             df['_desc_lower'] = df['description'].astype(str).str.lower()
             
             # Ленивая нормализация для применения фильтров на уровне векторных операций
-            df['_level_normalized'] = df['difficulty'].apply(self._normalize_level)
-            df['_price_type_inferred'] = df.apply(self._infer_price_type, axis=1)
-            df['_lang_detected'] = df.apply(self._detect_language, axis=1)
+            df['_level_normalized'] = df['difficulty'].apply(self._normalize_level).astype('category')
+            df['_price_type_inferred'] = df.apply(self._infer_price_type, axis=1).astype('category')
+            df['_lang_detected'] = df.apply(self._detect_language, axis=1).astype('category')
             df['_cert_normalized'] = df['certificate'].apply(self._normalize_certificate)
+            
+            if 'priority' in df.columns:
+                df['priority'] = pd.to_numeric(df['priority'], errors='coerce')
+            
+            if 'platform' in df.columns:
+                df['platform'] = df['platform'].astype('category')
+                
             self._df_prepared = df
         return self._df_prepared
 
@@ -204,52 +239,42 @@ class CourseFinderService:
         skill_clean = skill.lower().replace('_', ' ')
         base_df = self._prepare_base_dataframe()
         
+        # Filter out rows where priority is NaN to match original loop logic exactly
+        base_df_valid = base_df[base_df['priority'].notna()]
+        
+        # Search title and description for matching terms
+        title_lower = base_df_valid['_title_lower']
+        desc_lower  = base_df_valid['_desc_lower']
+
+        mask_title_any   = title_lower.str.contains(skill_clean, regex=False, na=False)
+        mask_desc        = desc_lower.str.contains(skill_clean, regex=False, na=False)
+
+        combined_mask = mask_title_any | mask_desc
+        df = base_df_valid[combined_mask].copy()
+        
+        # Применение динамических фильтров пользователя
+        df = self._apply_dynamic_filters(df, filters or {})
+
+        if df.empty:
+            return []
+
+        # Vectorized match level calculation
+        title_sub_lower = df['_title_lower'].str[:40]
+        mask_level_1 = title_sub_lower.str.contains(skill_clean, regex=False, na=False)
+        mask_level_2 = df['_title_lower'].str.contains(skill_clean, regex=False, na=False) & ~mask_level_1
+        mask_level_3 = df['_desc_lower'].str.contains(skill_clean, regex=False, na=False) & ~df['_title_lower'].str.contains(skill_clean, regex=False, na=False)
+
+        conditions = [mask_level_1, mask_level_2, mask_level_3]
+        df['match_level'] = np.select(conditions, [1, 2, 3], default=4)
+        df['fair_score'] = df['rating'] * np.log1p(df['number_of_reviews'])
+
+        # Multi-column sort by priority ascending, match_level ascending, and fair_score descending
+        df = df.sort_values(by=['priority', 'match_level', 'fair_score'], ascending=[True, True, False])
+        df = df.drop_duplicates(subset=['title'], keep='first')
+
         results = []
-        used_titles = set()
-        priorities = sorted(p for p in base_df['priority'].unique() if pd.notna(p))
-
-        for priority in priorities:
-            if len(results) >= top_n:
-                break
-
-            platform_df = base_df[base_df['priority'] == priority].copy()
-            title_lower = platform_df['_title_lower']
-            desc_lower  = platform_df['_desc_lower']
-
-            mask_title_front = title_lower.str[:40].str.contains(skill_clean, regex=False, na=False)
-            mask_title_any   = title_lower.str.contains(skill_clean, regex=False, na=False)
-            mask_desc        = desc_lower.str.contains(skill_clean, regex=False, na=False)
-
-            combined_mask = mask_title_any | mask_desc
-            df = platform_df[combined_mask].copy()
-            
-            # Применение динамических фильтров пользователя
-            df = self._apply_dynamic_filters(df, filters or {})
-
-            if df.empty:
-                continue
-
-            df['match_level'] = np.select(
-                [
-                    df['_title_lower'].str[:40].str.contains(skill_clean, regex=False, na=False), 
-                    df['_title_lower'].str.contains(skill_clean, regex=False, na=False) & ~df['_title_lower'].str[:40].str.contains(skill_clean, regex=False, na=False), 
-                    df['_desc_lower'].str.contains(skill_clean, regex=False, na=False) & ~df['_title_lower'].str.contains(skill_clean, regex=False, na=False)
-                ],
-                [1, 2, 3],
-                default=4
-            )
-
-            df['fair_score'] = df['rating'] * np.log1p(df['number_of_reviews'])
-            df = df.sort_values(by=['match_level', 'fair_score'], ascending=[True, False])
-            df = df.drop_duplicates(subset=['title'], keep='first')
-
-            for _, row in df.iterrows():
-                if len(results) >= top_n:
-                    break
-                if row['title'] not in used_titles:
-                    results.append(self._serialize_course_row(row))
-                    used_titles.add(row['title'])
-
+        for _, row in df.head(top_n).iterrows():
+            results.append(self._serialize_course_row(row))
         return results
 
     def get_roadmap_with_courses(
@@ -293,7 +318,7 @@ class CourseFinderService:
             updated_courses[skill] = self._find_courses_for_locale(skill, lang, filters=filters)
         return updated_courses
 
-    def get_gap_summary_for_all(self, student_skills: list[str]) -> dict:
+    def get_gap_summary_for_all(self, student_skills: list[str], lang: str = 'en') -> dict:
         """Рассчитывает gap и full роадмапы для всех имеющихся профессий."""
         summaries = {}
         for profession in self.profession_profiles.keys():
@@ -303,8 +328,19 @@ class CourseFinderService:
                 student_raw_skills=student_skills,
                 profession_profile=profession_profile,
             )
+            
+            # Находим курсы для всех gap-скиллов этой профессии
+            roadmap_with_courses = {}
+            for cat, skills in roadmap['gap'].items():
+                roadmap_with_courses[cat] = {}
+                for skill in skills:
+                    roadmap_with_courses[cat][skill] = {
+                        'courses': self._find_courses_for_locale(skill, lang)
+                    }
+                    
             summaries[profession] = {
                 "full": roadmap["full"],
-                "gap": roadmap["gap"]
+                "gap": roadmap["gap"],
+                "roadmap_with_courses": roadmap_with_courses
             }
         return summaries

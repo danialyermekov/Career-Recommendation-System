@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from schemas import StudentProfile, ChatRequest, RoadmapProgressRequest, CourseFilterPreferencesRequest
 import asyncio
 from top_profession import get_top_profession
+from config import CLASSIFIER_COEF, SKILL_MATCHER_COEF, DEMAND_TREND_COEF, DEMAND_MARKET_SHARE_COEF
 from uuid import uuid4
 from database import (
     DEMO_USER_ID,
@@ -185,6 +186,7 @@ def recommend(profile: StudentProfile):
 
         # 1. Skill Matcher
         skill_scores = skill_matcher_service.get_scores(profile.skills)
+        user_skills_ranked = skill_matcher_service.get_user_skills_ranked(profile.skills)
 
         # 2. Classifier 
         profile_dict = profile.model_dump(exclude={'skills', 'lang'})
@@ -215,9 +217,9 @@ def recommend(profile: StudentProfile):
             lang=profile.lang,
         )
         roadmaps_by_profession = (
-            course_finder_service.get_gap_summary_for_all(profile.skills)
+            course_finder_service.get_gap_summary_for_all(profile.skills, lang=profile.lang)
             if hasattr(course_finder_service, "get_gap_summary_for_all")
-            else {top_profession: {"full": full_roadmap, "gap": {}}}
+            else {top_profession: {"full": full_roadmap, "gap": {}, "roadmap_with_courses": roadmap_with_courses}}
         )
 
         # 6. LLM Context Building
@@ -231,6 +233,10 @@ def recommend(profile: StudentProfile):
         session_id = str(uuid4())
         session_store[session_id] = context
 
+        # Get SHAP explanations for top profession
+        top_prof_explanation = skill_explanations.get(top_profession, {})
+        top_prof_shap = top_prof_explanation.get("shap_explanations", [])
+
         response_payload = {
             'top_profession':        top_profession,
             'session_id':            session_id,
@@ -240,10 +246,19 @@ def recommend(profile: StudentProfile):
             'classification_scores': classification_scores,
             'demand_scores':         demand_scores,
             'skill_explanations':    skill_explanations,
+            'shap_explanations':     top_prof_shap,
+            'scoring_weights': {
+                'classifier': CLASSIFIER_COEF,
+                'skill_matcher': SKILL_MATCHER_COEF,
+                'demand_trend': DEMAND_TREND_COEF,
+                'demand_market_share': DEMAND_MARKET_SHARE_COEF,
+            },
+            'user_skills_ranked':    user_skills_ranked,
             'roadmap_with_courses':  roadmap_with_courses,
             'full_roadmap':          full_roadmap,
             'roadmaps_by_profession': roadmaps_by_profession,
             'context':               context,
+            '_formData':             profile.model_dump(),
         }
 
         save_recommendation_session(

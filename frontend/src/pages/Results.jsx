@@ -627,11 +627,53 @@ function ScoreCircleGrid({ professions, rows, profLabel, t, onSelect }) {
 }
 
 function SkillImpactChart({ explanation, profName, t }) {
-  const items = explanation?.items || []
-  if (!items.length) return null
-  const maxImpact = Math.max(...items.map(item => item.abs_value || Math.abs(item.value || 0)), 0.001)
-  const positive = explanation.positive || items.filter(item => item.value > 0)
-  const negative = explanation.negative || items.filter(item => item.value < 0)
+  const isShap = !!explanation?.shap_explanations
+  const rawItems = explanation?.shap_explanations || explanation?.items || []
+  if (!rawItems.length) return null
+
+  // Standardize the items so the rendering and lists work seamlessly
+  const items = rawItems.map(item => {
+    if (isShap) {
+      const val = item.influence_percent
+      const present = item.raw_value > 0
+      let direction = 'positive'
+      if (val < 0) {
+        direction = present ? 'negative' : 'missing'
+      }
+      const absVal = Math.abs(val)
+      let magnitude = 'slightly'
+      if (absVal >= 15.0) {
+        magnitude = 'strongly'
+      } else if (absVal >= 5.0) {
+        magnitude = 'moderately'
+      }
+
+      return {
+        skill: item.label || item.feature_name,
+        feature: item.feature_name,
+        value: val,
+        abs_value: absVal,
+        present: present,
+        direction: direction,
+        magnitude: magnitude,
+        text: val >= 0 
+          ? `${item.label || item.feature_name} slightly increased confidence.`
+          : `${item.label || item.feature_name} gap slightly reduced confidence.`,
+      }
+    } else {
+      const totalAbsVal = rawItems.reduce((sum, i) => sum + Math.abs(i.value || 0), 0)
+      const pct = totalAbsVal > 1e-9 ? ((item.value || 0) / totalAbsVal) * 100 : 0
+      return {
+        ...item,
+        value: pct,
+        abs_value: Math.abs(pct),
+      }
+    }
+  })
+
+  const maxAbsPercent = Math.max(...items.map(item => item.abs_value), 0.001)
+  const positive = items.filter(item => item.value > 0)
+  const negative = items.filter(item => item.value < 0)
   const methodText = explanation.method === 'catboost_shap' ? t.results.shapMethod : t.results.shapFallback
   const magnitude = item => t.results.impactMagnitude?.[item.magnitude] || item.magnitude
   const itemText = item => {
@@ -660,21 +702,29 @@ function SkillImpactChart({ explanation, profName, t }) {
       </p>
       <div className={styles.skillImpactChart}>
         {items.map(item => {
-          const width = Math.max(5, Math.round((item.abs_value || Math.abs(item.value || 0)) / maxImpact * 100))
+          const barWidth = Math.max(2, (item.abs_value / maxAbsPercent) * 50)
           const positiveImpact = item.value >= 0
           return (
             <div key={item.feature || item.skill} className={styles.skillImpactRow} title={itemText(item)}>
               <span className={styles.skillImpactName}>{item.skill}</span>
               <span className={styles.skillImpactTrack}>
+                <span className={styles.skillImpactBaseline} />
                 <i
                   className={positiveImpact ? styles.skillImpactPositive : styles.skillImpactNegative}
-                  style={{ width: `${width}%` }}
+                  style={
+                    positiveImpact
+                      ? { left: '50%', width: `${barWidth}%`, position: 'absolute', height: '100%', borderRadius: '0 999px 999px 0' }
+                      : { right: '50%', width: `${barWidth}%`, position: 'absolute', height: '100%', borderRadius: '999px 0 0 999px' }
+                  }
                 />
               </span>
-              <span className={styles.skillImpactValue}>{positiveImpact ? '+' : ''}{Math.round((item.value || 0) * 100)}%</span>
+              <span className={styles.skillImpactValue}>{positiveImpact ? '+' : ''}{item.value.toFixed(2)}%</span>
             </div>
           )
         })}
+      </div>
+      <div className={styles.skillImpactLegend}>
+        {t.results.shapLegend || "Positive values (+) increase the probability of this career track, while negative values (-) decrease it."}
       </div>
       <div className={styles.skillImpactLists}>
         <div>
@@ -1032,7 +1082,10 @@ while (changed) {
       if (!bareSk) continue
 
       // For specific short or platform-specific terms, enforce strict matching
-      if (['sql', 'git', 'go', 'r', 'aws', 'gcp'].includes(bareSk)) {
+      if (
+        ['sql', 'git', 'go', 'r', 'aws', 'gcp', 'sql_server', 'sqlserver'].includes(bareSk) ||
+        ['sql', 'git', 'go', 'r', 'aws', 'gcp', 'sql_server', 'sqlserver'].includes(bareKey)
+      ) {
         if (bareKey === bareSk) return true;
         continue;
       }
@@ -1383,6 +1436,74 @@ function DeepModeBtn({ active, onClick, lang, t }) {
       )}
     </button>
   )
+}
+
+/* ─── Scoring Formula Header ─────────────────────────────────── */
+function ScoringFormulaHeader({ results, t }) {
+  const weights = results?.scoring_weights || {
+    classifier: 0.38,
+    skill_matcher: 0.35,
+    demand_trend: 0.20,
+    demand_market_share: 0.07,
+  };
+
+  const w_prof = weights.classifier.toFixed(2);
+  const w_skill = weights.skill_matcher.toFixed(2);
+  const w_trend = weights.demand_trend.toFixed(2);
+  const w_share = weights.demand_market_share.toFixed(2);
+
+  const pct_prof = Math.round(weights.classifier * 100);
+  const pct_skill = Math.round(weights.skill_matcher * 100);
+  const pct_trend = Math.round(weights.demand_trend * 100);
+  const pct_share = Math.round(weights.demand_market_share * 100);
+
+  return (
+    <div className={styles.formulaBanner}>
+      <div className={styles.formulaTitle}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6 }}>
+          <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+        </svg>
+        <strong>{t.results.formulaTitle}</strong>
+      </div>
+      
+      <div className={styles.formulaBody}>
+        <code>
+          S(p) = {w_prof} • S_profile(p) + {w_skill} • S_skill(p) + {w_trend} • T_trend(p) + {w_share} • M_share(p)
+        </code>
+      </div>
+
+      <div className={styles.formulaLegend}>
+        <div className={styles.legendItem}>
+          <span className={styles.legendDot} style={{ background: '#5b8dee' }} />
+          <div>
+            <strong>S_profile ({pct_prof}%):</strong> {t.results.formulaLegendProfile}
+          </div>
+        </div>
+        <div className={styles.legendItem}>
+          <span className={styles.legendDot} style={{ background: '#4caf82' }} />
+          <div>
+            <strong>S_skill ({pct_skill}%):</strong> {t.results.formulaLegendSkill}
+          </div>
+        </div>
+        <div className={styles.legendItem}>
+          <span className={styles.legendDot} style={{ background: '#9b6ddf' }} />
+          <div>
+            <strong>T_trend ({pct_trend}%):</strong> {t.results.formulaLegendTrend}
+          </div>
+        </div>
+        <div className={styles.legendItem}>
+          <span className={styles.legendDot} style={{ background: '#f0943a' }} />
+          <div>
+            <strong>M_share ({pct_share}%):</strong> {t.results.formulaLegendShare}
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.formulaFootnote}>
+        * {t.results.formulaFootnote}
+      </div>
+    </div>
+  );
 }
 
 /* ─── Main Component ─────────────────────────────────────────── */
@@ -2334,6 +2455,47 @@ export default function Results({ results: initialResults, formData, onBack, onR
           )}
         </div>
 
+        <div className={styles.sidebarSection}>
+          <div className={styles.sidebarLabel} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>{t.results.yourSkillsTitle}</span>
+            <button
+              className={styles.tooltipIcon}
+              type="button"
+              title={t.results.skillsTooltip}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-3)',
+                cursor: 'help',
+                padding: '0 4px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+              </svg>
+            </button>
+          </div>
+          <div className={styles.skillsTagCloud}>
+            {(results.user_skills_ranked || []).map((s, idx) => (
+              <span
+                key={`${s.skill}-${idx}`}
+                className={styles.skillTag}
+                style={{
+                  opacity: s.status === 'General/Non-IT Token' ? 0.65 : 1
+                }}
+                title={s.status === 'General/Non-IT Token' ? "General/Non-IT Token" : `TF-IDF Weight: ${s.tfidf_weight}`}
+              >
+                {s.skill}
+                <span className={styles.skillWeightBadge}>
+                  {s.tfidf_weight.toFixed(2)}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+
         {sorted.length > 1 && (
           <div className={styles.sidebarSection}>
             <div className={styles.sidebarLabel}>{t.results.sidebarLabels.scores}</div>
@@ -2429,6 +2591,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
       {/* ─ MAIN ─ */}
       <main className={styles.main}>
+        <ScoringFormulaHeader results={results} t={t} />
         <div className={styles.tabsSticky}>
           <div className={styles.tabs}>
             {tabs.map(({ key, label }) => (

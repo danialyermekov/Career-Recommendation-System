@@ -6,6 +6,7 @@ google-genai>=1.75.0
 google-generativeai>=0.8.6
 joblib>=1.5.3
 lightgbm>=4.6.0
+numpy>=2.4.4
 openai>=2.34.0
 pandas>=3.0.2
 pymupdf>=1.26.0

@@ -195,6 +195,15 @@ export const translations = {
       shapMethod: 'Local SHAP explanation from the classifier',
       shapFallback: 'Fallback: feature importance and counterfactual skill deltas',
       shapTooltip: 'Bars show how each skill moved the classifier score for the selected profession. Green increases confidence; red lowers it or marks a gap.',
+      shapLegend: 'Positive values (+) increase the probability of this career track, while negative values (-) decrease it.',
+      formulaTitle: 'Algorithmic Scoring Formula',
+      formulaLegendProfile: 'Career profile fit predicted by the CatBoost classifier based on academic and demographic vectors.',
+      formulaLegendSkill: 'Content-based skill overlap computed via TF-IDF cosine similarity against the ideal profession profile.',
+      formulaLegendTrend: 'Labor-market hiring momentum calculated via LightGBM time-series relative to the historical peak.',
+      formulaLegendShare: "Profession's absolute volume share of the predicted vacancy market.",
+      formulaFootnote: 'All intermediate components are min-max aligned across all 7 evaluated tracks to ensure a balanced and regularized final ranking.',
+      yourSkillsTitle: 'Your Skills',
+      skillsTooltip: 'Skill Weight (TF-IDF): Indicates how unique and critical this skill is for distinguishing your target career track. Broad skills like Python or SQL have lower weights because they appear across many professions, while specialized libraries (like PyTorch) receive higher weights.',
       skillImpactSummary: (prof, positive, negative) => `Knowing "${positive}" strengthened the recommendation for ${prof}. And lacking "${negative}" is the main limiting factor.`,
       skillPositiveText: (skill, magnitude, prof, isSoft, isPresent) => {
         if (isSoft) return isPresent ? `A high score in "${skill}" ${magnitude} increased the model's score.` : `A low score in "${skill}" ${magnitude} increased the model's score.`
@@ -480,6 +489,15 @@ export const translations = {
       shapMethod: 'Локальное SHAP-объяснение классификатора',
       shapFallback: 'Fallback: feature importance и counterfactual-оценка навыков',
       shapTooltip: 'Столбцы показывают, как каждый навык изменил score классификатора для выбранной профессии. Зеленый усиливает уверенность, красный снижает ее или показывает пробел.',
+      shapLegend: 'Положительные значения (+) увеличивают вероятность этого карьерного трека, а отрицательные (-) уменьшают её.',
+      formulaTitle: 'Формула алгоритмического скоринга',
+      formulaLegendProfile: 'Соответствие карьерного профиля, предсказанное классификатором CatBoost на основе академического и демографического векторов.',
+      formulaLegendSkill: 'Пересечение навыков на основе контента, вычисленное с помощью косинусного сходства TF-IDF по отношению к эталонному профилю профессии.',
+      formulaLegendTrend: 'Динамика найма на рынке труда, рассчитанная с помощью временных рядов LightGBM относительно исторического пика.',
+      formulaLegendShare: 'Абсолютная объемная доля профессии на прогнозируемом рынке вакансий.',
+      formulaFootnote: 'Все промежуточные компоненты выровнены по методу Min-Max по всем 7 оцениваемым трекам для обеспечения сбалансированного и регуляризованного итогового рейтинга.',
+      yourSkillsTitle: 'Ваши навыки',
+      skillsTooltip: 'Вес навыка (TF-IDF): указывает на то, насколько уникален и критичен этот навык для определения целевого карьерного трека. Широкие навыки, такие как Python или SQL, имеют меньший вес, так как встречаются во многих профессиях, в то время как специализированные библиотеки (например, PyTorch) получают больший вес.',
       skillImpactSummary: (prof, positive, negative) => `Знание «${positive}» усилило рекомендацию ${prof}. А нехватка «${negative}» — основной сдерживающий фактор.`,
       skillPositiveText: (skill, magnitude, prof, isSoft, isPresent) => {
         if (isSoft) return isPresent ? `Высокая оценка «${skill}» ${magnitude} повысила оценку модели.` : `Низкая оценка «${skill}» ${magnitude} повысила оценку модели.`
@@ -765,6 +783,15 @@ export const translations = {
       shapMethod: 'Классификатордан алынған локалды SHAP түсіндірмесі',
       shapFallback: 'Fallback: feature importance және counterfactual дағды бағасы',
       shapTooltip: 'Бағандар әр дағды таңдалған мамандық score-ын қалай өзгерткенін көрсетеді. Жасыл сенімді арттырады, қызыл төмендетеді немесе пробелді көрсетеді.',
+      shapLegend: 'Оң мәндер (+) осы мансап бағытының ықтималдығын арттырады, ал теріс мәндер (-) оны төмендетеді.',
+      formulaTitle: 'Алгоритмдік бағалау формуласы',
+      formulaLegendProfile: 'Академиялық және демографиялық векторлар негізінде CatBoost классификаторы болжаған мансаптық профильдің сәйкестігі.',
+      formulaLegendSkill: 'Кәсіптің эталондық профиліне қатысты TF-IDF косинустық ұқсастығы арқылы есептелген мазмұнға негізделген дағдылардың қиылысуы.',
+      formulaLegendTrend: 'Тарихи шыңға қатысты LightGBM уақытша қатарлары арқылы есептелген еңбек нарығындағы жұмысқа қабылдау динамикасы.',
+      formulaLegendShare: 'Болжамды бос жұмыс орындары нарығындағы кәсіптің абсолюттік көлемдік үлесі.',
+      formulaFootnote: 'Теңгерімді және реттелген қорытынды рейтингті қамтамасыз ету үшін барлық аралық компоненттер бағаланатын барлық 7 бағыт бойынша Min-Max әдісімен теңестірілген.',
+      yourSkillsTitle: 'Сіздің дағдыларыңыз',
+      skillsTooltip: 'Дағдының салмағы (TF-IDF): бұл дағдының мақсатты мансап бағытын анықтау үшін қаншалықты бірегей және маңызды екенін көрсетеді. Python немесе SQL сияқты кең дағдылардың салмағы төменірек болады, себебі олар көптеген мамандықтарда кездеседі, ал мамандандырылған кітапханалар (мысалы, PyTorch) жоғарырақ салмақ алады.',
       skillImpactSummary: (prof, positive, negative) => `«${positive}» білуі ${prof} ұсынысын күшейтті. Ал «${negative}» болмауы — негізгі тежеуші фактор.`,
       skillPositiveText: (skill, magnitude, prof, isSoft, isPresent) => {
         if (isSoft) return isPresent ? `«${skill}» жоғары бағасы модель бағасын ${magnitude} көтерді.` : `«${skill}» төмен бағасы модель бағасын ${magnitude} көтерді.`

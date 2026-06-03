@@ -24,6 +24,29 @@ SKILL_FEATURE_LABELS = {
     "problem_solving": "Problem Solving",
     "teamwork": "Teamwork",
     "adaptability": "Adaptability",
+    # Derived and composite feature labels
+    "tech_total": "Tech Skills Total",
+    "soft_total": "Soft Skills Total",
+    "tech_soft_ratio": "Tech-to-Soft Ratio",
+    "ds_score": "Data Science Profile",
+    "da_score": "Data Analytics Profile",
+    "da_score_v2": "Data Analytics Profile v2",
+    "ba_score": "Business Analytics Profile",
+    "mle_score": "ML Engineering Profile",
+    "de_score": "Data Engineering Profile",
+    "se_score": "Software Engineering Profile",
+    "ce_score": "Cloud Engineering Profile",
+    "is_data_engineer": "Data Engineer Path",
+    "is_data_analyst": "Data Analyst Path",
+    "is_software_dev": "Software Developer Path",
+    "is_cloud_expert": "Cloud Expert Path",
+    "is_heavy_ml": "Heavy ML Focus",
+    "is_data_expert": "Data Expert Focus",
+    "dev_vs_data": "Dev-to-Data Balance",
+    "ml_vs_dev": "ML-to-Dev Balance",
+    "analytics_no_infra": "Analytics Bias",
+    "infra_no_analytics": "Infrastructure Bias",
+    "da_vs_ds": "Analyst vs Scientist Focus",
 }
 
 DERIVED_SKILL_FEATURES = {
@@ -143,13 +166,35 @@ class ClassifierService:
             contributions = self._aggregate_skill_values(class_values[class_idx], feature_names)
             if not any(abs(value) > 1e-9 for value in contributions.values()):
                 continue
-            explanations[profession] = self._format_skill_explanation(
+
+            # Calculate L1-normalized shap_explanations before aggregation/formatting
+            total_abs_shap = float(np.sum(np.abs(class_values[class_idx])))
+            shap_exps = []
+            for feat_name, val in zip(feature_names, class_values[class_idx]):
+                clean_name = feat_name.split("__")[-1]
+                influence_percent = (val / total_abs_shap) * 100 if total_abs_shap > 1e-9 else 0.0
+                raw_value = float(X_df[feat_name].iloc[0])
+                
+                label = SKILL_FEATURE_LABELS.get(clean_name, clean_name.replace("_", " ").title())
+                shap_exps.append({
+                    "feature_name": clean_name,
+                    "label": label,
+                    "raw_value": raw_value,
+                    "influence_percent": round(influence_percent, 2)
+                })
+            
+            # Sort by absolute influence percentage descending
+            shap_exps.sort(key=lambda x: abs(x["influence_percent"]), reverse=True)
+
+            formatted = self._format_skill_explanation(
                 profession=profession,
                 profile=profile,
                 contributions=contributions,
                 method="catboost_shap",
                 top_n=top_n,
             )
+            formatted["shap_explanations"] = shap_exps
+            explanations[profession] = formatted
         return explanations
 
     def _get_feature_importance_fallback(self, profile: dict, professions: list[str], top_n: int) -> dict:
@@ -184,13 +229,31 @@ class ClassifierService:
                 contribution = base - changed
                 contributions[skill] = contribution * importance_weights.get(skill, 1.0)
 
-            explanations[profession] = self._format_skill_explanation(
+            # Compute L1-normalized shap_explanations based on fallback contributions
+            total_abs_contrib = sum(abs(val) for val in contributions.values())
+            shap_exps = []
+            for skill, val in contributions.items():
+                influence_percent = (val / total_abs_contrib) * 100 if total_abs_contrib > 1e-9 else 0.0
+                raw_value = float(profile.get(skill, 0))
+                label = SKILL_FEATURE_LABELS.get(skill, skill.replace("_", " ").title())
+                shap_exps.append({
+                    "feature_name": skill,
+                    "label": label,
+                    "raw_value": raw_value,
+                    "influence_percent": round(influence_percent, 2)
+                })
+            
+            shap_exps.sort(key=lambda x: abs(x["influence_percent"]), reverse=True)
+
+            formatted = self._format_skill_explanation(
                 profession=profession,
                 profile=profile,
                 contributions=contributions,
                 method="feature_importance_fallback",
                 top_n=top_n,
             )
+            formatted["shap_explanations"] = shap_exps
+            explanations[profession] = formatted
         return explanations
 
     def _skill_importance_weights(self) -> dict[str, float]:

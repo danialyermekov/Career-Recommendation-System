@@ -835,8 +835,30 @@
   border-radius: inherit;
 }
 
-.skillImpactPositive { background: linear-gradient(90deg, rgba(76, 175, 130, 0.65), #4caf82); }
-.skillImpactNegative { background: linear-gradient(90deg, rgba(217, 107, 107, 0.65), #d96b6b); }
+.skillImpactBaseline {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text-3);
+  opacity: 0.35;
+  z-index: 1;
+}
+
+.skillImpactPositive { background: linear-gradient(90deg, rgba(220, 20, 60, 0.65), #dc143c); }
+.skillImpactNegative { background: linear-gradient(90deg, rgba(91, 141, 238, 0.65), #5b8dee); }
+
+.skillImpactLegend {
+  margin-top: 12px;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  text-align: center;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+  line-height: 1.4;
+}
 
 .skillImpactValue {
   color: var(--text-2);
@@ -1976,4 +1998,127 @@
   .main {
     padding: 16px 12px 32px;
   }
+}
+
+.formulaBanner {
+  background: var(--panel-strong);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  margin-bottom: 22px;
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(8px);
+  animation: fadeIn 0.3s ease-out;
+}
+
+.formulaTitle {
+  display: flex;
+  align-items: center;
+  color: var(--text);
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+.formulaBody {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.formulaBody code {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  color: var(--accent);
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.formulaLegend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.legendItem {
+  display: flex;
+  align-items: flex-start;
+  font-size: 0.74rem;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.legendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 4px;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.legendItem strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.formulaFootnote {
+  font-size: 0.68rem;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  text-align: right;
+  line-height: 1.4;
+}
+
+.skillsTagCloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.skillTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  transition: all var(--transition);
+}
+
+.skillTag:hover {
+  border-color: var(--border-hover);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.skillWeightBadge {
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+}
+
+.tooltipIcon {
+  transition: color var(--transition);
+}
+
+.tooltipIcon:hover {
+  color: var(--accent) !important;
 }

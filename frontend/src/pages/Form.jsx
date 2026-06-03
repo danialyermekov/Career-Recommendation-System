@@ -39,7 +39,7 @@ const SKILL_SUGGESTIONS = [
   'DevOps', 'CI/CD', 'Git', 'Linux', 'Bash', 'Networking', 'Cybersecurity',
   'Web Development', 'React', 'Vue', 'Angular', 'FastAPI', 'Django', 'Flask', 'Node.js',
   'Spark', 'Hadoop', 'Kafka', 'Airflow', 'dbt', 'Tableau', 'Power BI', 'Excel',
-  'R', 'MATLAB', 'Scala', 'Julia',
+  'R', 'MATLAB', 'Scala', 'Julia', 'C++', 'C#', 'Go', 'Rust', 'Kotlin', 'Swift',
   'API Design', 'REST', 'GraphQL', 'Microservices', 'System Design', 'Agile', 'Scrum',
 ]
 

@@ -12,6 +12,7 @@ Requires-Dist: google-genai>=1.75.0
 Requires-Dist: google-generativeai>=0.8.6
 Requires-Dist: joblib>=1.5.3
 Requires-Dist: lightgbm>=4.6.0
+Requires-Dist: numpy>=2.4.4
 Requires-Dist: openai>=2.34.0
 Requires-Dist: pandas>=3.0.2
 Requires-Dist: pymupdf>=1.26.0
