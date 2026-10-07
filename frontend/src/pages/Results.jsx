@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 import styles from './Results.module.css'
+import { getScoreBreakdown, formatMatchScore, formatMatchPoints } from '../utils/scoring'
+import { isDemoSession } from '../utils/demoProfile'
+import LLMSettings from '../components/LLMSettings'
+import { LLM_PROVIDERS, LLM_SETTINGS_EVENT } from '../utils/llmSettings'
 import {
   clearRecommendationHistory,
   getRecommendationHistory,
@@ -29,23 +33,23 @@ const BAR_COLORS = {
   market_share:  '#f0943a',
 }
 const BAR_TOOLTIPS = {
-  ru: {
-    skill_match:   'Насколько ваши технические навыки соответствуют требованиям профессии',
-    profile_match: 'Насколько ваш профиль подходит для этого карьерного пути',
-    trend_score:   'Тренд рыночного спроса на данную профессию',
-    market_share:  'Доля рынка вакансий, занимаемая этой профессией',
-  },
   en: {
-    skill_match:   'How well your technical skills match the profession requirements',
-    profile_match: 'How your overall profile fits this career path',
-    trend_score:   'Market demand trend for this profession',
-    market_share:  'Vacancy market share occupied by this profession',
+    skill_match: 'Normalized TF-IDF cosine similarity. 100 is the strongest match among the scored careers.',
+    profile_match: 'Profile classifier output divided by the sum across careers. It is not career-success probability.',
+    trend_score: 'Historical demand estimate relative to the track’s weekly peak, normalized by the largest trend signal.',
+    market_share: 'Relative demand signal: 100 means the largest share among these tracks, not 100% of all jobs.',
+  },
+  ru: {
+    skill_match: 'Нормализованное TF-IDF косинусное сходство. 100 — наибольшее сходство среди оцениваемых профессий.',
+    profile_match: 'Выход классификатора профиля, делённый на сумму по профессиям. Это не вероятность карьерного успеха.',
+    trend_score: 'Историческая оценка спроса относительно недельного пика профессии, нормализованная по максимальному сигналу.',
+    market_share: 'Относительный сигнал спроса: 100 означает наибольшую долю среди этих направлений, а не 100% всех вакансий.',
   },
   kk: {
-    skill_match:   'Техникалық дағдыларыңыз мамандық талаптарына қаншалықты сәйкес келеді',
-    profile_match: 'Жалпы профиліңіз осы мансап бағытына қаншалықты сәйкес келеді',
-    trend_score:   'Бұл мамандық бойынша нарық сұранысының тренді',
-    market_share:  'Бұл мамандықтың вакансиялар нарығындағы үлесі',
+    skill_match: 'Нормаланған TF-IDF косинустық ұқсастығы. 100 — бағаланатын бағыттар арасындағы ең үлкен ұқсастық.',
+    profile_match: 'Профиль классификаторының нәтижесі мамандықтар қосындысына бөлінеді. Бұл мансаптық табыс ықтималдығы емес.',
+    trend_score: 'Тарихи сұраныс бағасы апталық шыңға қатысты, ең үлкен тренд сигналына нормаланған.',
+    market_share: 'Салыстырмалы сұраныс: 100 осы бағыттардағы ең үлкен үлесті білдіреді, барлық вакансияның 100%-ын емес.',
   },
 }
 
@@ -287,7 +291,8 @@ function ProgressRing({ value, size = 64, stroke = 5, color = '#5b8dee', animKey
         position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
         justifyContent: 'center', fontSize: size < 60 ? '0.65rem' : '0.78rem',
         fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text)',
-      }}>{pct}%</div>
+        flexDirection: 'column', lineHeight: 1.2,
+      }} aria-label={formatMatchScore(value)}><span>{formatMatchPoints(value)}</span><small style={{ fontSize: '.6rem', color: 'var(--text-2)' }}>/100</small></div>
     </div>
   )
 }
@@ -310,7 +315,7 @@ function AnimatedBar({ value, max = 1, color, animKey, tooltipText }) {
       <div className={`${styles.bar} ${tooltipText ? styles.barTooltipWrap : ''}`} data-tip={tooltipText}>
         <div className={styles.barFill} style={{ width: `${width}%`, background: color, transition: 'width 0.8s cubic-bezier(0.4,0,0.2,1)' }}/>
       </div>
-      <span className={styles.barPct}>{pct}%</span>
+      <span className={styles.barPct}>{pct} / 100</span>
     </div>
   )
 }
@@ -361,7 +366,7 @@ function RadarChart({ data, animKey, lang }) {
     skill_match:   Math.min(parseFloat(data.skill_match   ?? 0), 1),
     profile_match: Math.min(parseFloat(data.profile_match ?? 0), 1),
     trend_score:   Math.min(parseFloat(data.trend_score   ?? 0), 1),
-    market_share:  Math.min(parseFloat(data.market_share  ?? 0) / 100, 1),
+    market_share:  Math.min(parseFloat(data.market_share  ?? 0), 1),
   }
 
   const polyPoints = axes.map((ax, i) => pt(i, radarData[ax.key] || 0))
@@ -423,7 +428,7 @@ function RadarChart({ data, animKey, lang }) {
           pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 10,
           boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
         }}>
-          <span style={{ color: tooltip.color, fontWeight: 700 }}>{tooltip.val}%</span> {tooltip.label}
+          <span style={{ color: tooltip.color, fontWeight: 700 }}>{tooltip.val} / 100</span> {tooltip.label}
         </div>
       )}
     </div>
@@ -443,9 +448,9 @@ function ProfessionBarsChart({ professions, rows, profLabel, t, animKey, onSelec
       <div className={styles.professionBars}>
         {professions.map((p, index) => {
           const scorePct = pct(p.final_score, maxScore)
-          const tooltip = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${pct(p.final_score)}%\n${rows
+          const tooltip = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}\n${rows
             .filter(r => p[r.key] != null)
-            .map(r => `${r.label}: ${pct(p[r.key], r.max)}%`)
+            .map(r => `${r.label}: ${pct(p[r.key], r.max)} / 100`)
             .join('\n')}`
           return (
             <button
@@ -469,7 +474,7 @@ function ProfessionBarsChart({ professions, rows, profLabel, t, animKey, onSelec
                     <span
                       key={r.key}
                       style={{
-                        width: `${Math.max(3, pct(p[r.key], r.max) / rows.length)}%`,
+                        width: `${(p.contributions?.[r.key] ?? 0)}%`,
                         background: BAR_COLORS[r.key],
                         opacity: 0.85,
                         boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.1)'
@@ -478,7 +483,7 @@ function ProfessionBarsChart({ professions, rows, profLabel, t, animKey, onSelec
                   ))}
                 </span>
               </span>
-              <span className={styles.professionBarPct}>{pct(p.final_score)}%</span>
+              <span className={styles.professionBarPct}>{formatMatchScore(p.final_score)}</span>
             </button>
           )
         })}
@@ -551,7 +556,7 @@ function MultiProfessionRadar({ professions, profLabel, rows, t, animKey }) {
           <path d={poly('profile_match')} fill="none" stroke="#9b6ddf" strokeWidth="1.8" strokeDasharray="2 4"/>
           {axes.map((p, i) => {
             const pos = point(i, Math.min(p.final_score || 0, 1))
-            const tooltipText = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${pct(p.final_score)}%\n${rows.map(r => `${r.label}: ${pct(p[r.key], r.max)}%`).join('\n')}`
+            const tooltipText = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}\n${rows.map(r => `${r.label}: ${pct(p[r.key], r.max)} / 100`).join('\n')}`
             return (
               <circle
                 key={p.name}
@@ -614,7 +619,7 @@ function ScoreCircleGrid({ professions, rows, profLabel, t, onSelect }) {
   return (
     <div className={styles.scoreCircleGrid}>
       {professions.map(p => {
-        const tooltip = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${pct(p.final_score)}%\n${rows.map(r => `${r.label}: ${pct(p[r.key], r.max)}%`).join('\n')}`
+        const tooltip = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}\n${rows.map(r => `${r.label}: ${pct(p[r.key], r.max)} / 100`).join('\n')}`
         return (
           <button key={p.name} className={styles.scoreCircleCard} onClick={() => onSelect?.(p.name)}>
             <ProgressRing value={p.final_score ?? 0} size={58} stroke={4} color="#5b8dee" animKey={p.name} tooltipText={tooltip}/>
@@ -691,14 +696,11 @@ function SkillImpactChart({ explanation, profName, t }) {
           <strong>{t.results.skillImpactTitle}</strong>
           <span>{methodText}</span>
         </div>
-        <button className={styles.infoPill} type="button" title={t.results.shapTooltip}>SHAP</button>
+        <button className={styles.infoPill} type="button" title={t.results.shapTooltip}>{explanation.method === 'catboost_shap' ? 'SHAP' : (t.results.infoPill || 'Info')}</button>
       </div>
       <p className={styles.explainText}>
-        {t.results.skillImpactSummary?.(
-          profName,
-          positive[0]?.skill || t.results.yourCurrentSkills,
-          negative[0]?.skill || t.results.noMajorGaps,
-        ) || explanation.summary}
+        {positive[0] ? itemText(positive[0]) : t.results.noPositiveSkills}{' '}
+        {negative[0] ? itemText(negative[0]) : t.results.noMissingSkills}
       </p>
       <div className={styles.skillImpactChart}>
         {items.map(item => {
@@ -890,6 +892,31 @@ function CourseFilters({ filters, options, onChange, onReset, loading, t }) {
       )}
     </section>
   )
+}
+
+export function getCourseProviderUrl(course) {
+  if (!course) return null
+  if (course.url && typeof course.url === 'string' && course.url.startsWith('http')) {
+    return course.url
+  }
+  const title = encodeURIComponent(course.title || '')
+  const platform = (course.platform || '').toLowerCase().trim()
+  if (platform.includes('coursera')) {
+    return `https://www.coursera.org/search?query=${title}`
+  }
+  if (platform.includes('stepik')) {
+    return `https://stepik.org/catalog/search?q=${title}`
+  }
+  if (platform.includes('edx')) {
+    return `https://www.edx.org/search?q=${title}`
+  }
+  if (platform.includes('udacity')) {
+    return `https://www.udacity.com/courses/all?search=${title}`
+  }
+  if (platform.includes('udemy')) {
+    return `https://www.udemy.com/courses/search/?q=${title}`
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(`${course.platform || ''} ${course.title || ''}`.trim())}`
 }
 
 function CourseCard({ course, t, onOpen, onCopy, copied }) {
@@ -1309,15 +1336,6 @@ function ProfScores({ p, rows, animKey, lang }) {
 }
 
 /* ─── Vacancy trend ──────────────────────────────────────────── */
-function VacancyTrend({ value }) {
-  if (!value) return null
-  const color = value > 500 ? '#4caf82' : value > 100 ? '#f0943a' : '#9b6ddf'
-  const arrow = value > 500 ? '↑' : value > 100 ? '→' : '↓'
-  return (
-    <span style={{ color, fontFamily: 'var(--font-mono)', fontSize: '0.9rem', marginRight: 4 }}>{arrow}</span>
-  )
-}
-
 /* ─── Helpers ────────────────────────────────────────────────── */
 const copyText = (text) => {
   // Modern API - works only on HTTPS/localhost
@@ -1408,22 +1426,33 @@ function CourseModal({ course, onClose, t }) {
         ) : (
           <p className={styles.modalDescEmpty}>{t.results.noDescription}</p>
         )}
-        {course.url && (
-          <a href={course.url} target="_blank" rel="noopener noreferrer" className={styles.modalLink}>
-            {t.results.openCourse} →
-          </a>
-        )}
+        {(() => {
+          const providerUrl = getCourseProviderUrl(course)
+          if (!providerUrl) return null
+          const linkLabel = course.url
+            ? t.results.openCourse
+            : (t.results.openCourseSearch?.replace('{provider}', course.platform || 'Provider') || `${t.results.openCourse} (${course.platform})`)
+          return (
+            <a href={providerUrl} target="_blank" rel="noopener noreferrer" className={styles.modalLink}>
+              {linkLabel} →
+            </a>
+          )
+        })()}
+        <p style={{ marginTop: 14, fontSize: '0.8rem', color: 'var(--text-3, #888)', lineHeight: 1.45 }}>
+          {t.results.courseCatalogNote || t.review.roadmapNote}
+        </p>
       </div>
     </div>
   )
 }
 
 /* ─── Deep Mode Button ───────────────────────────────────────── */
-function DeepModeBtn({ active, onClick, lang, t }) {
+function DeepModeBtn({ active, onClick, disabled, lang, t }) {
   return (
     <button
       className={`${styles.deepModeBtn} ${active ? styles.deepModeBtnActive : ''}`}
       onClick={onClick}
+      disabled={disabled}
       title={active ? t.results.disableDeep : t.results.enableDeep}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1439,76 +1468,53 @@ function DeepModeBtn({ active, onClick, lang, t }) {
 }
 
 /* ─── Scoring Formula Header ─────────────────────────────────── */
-function ScoringFormulaHeader({ results, t }) {
-  const weights = results?.scoring_weights || {
-    classifier: 0.38,
-    skill_matcher: 0.35,
-    demand_trend: 0.20,
-    demand_market_share: 0.07,
-  };
-
-  const w_prof = weights.classifier.toFixed(2);
-  const w_skill = weights.skill_matcher.toFixed(2);
-  const w_trend = weights.demand_trend.toFixed(2);
-  const w_share = weights.demand_market_share.toFixed(2);
-
-  const pct_prof = Math.round(weights.classifier * 100);
-  const pct_skill = Math.round(weights.skill_matcher * 100);
-  const pct_trend = Math.round(weights.demand_trend * 100);
-  const pct_share = Math.round(weights.demand_market_share * 100);
-
+function ScoringFormulaHeader({ results, profession, t }) {
+  const components = getScoreBreakdown(results, profession)
+  const labels = {
+    profile_match: t.results.classification, skill_match: t.results.skillMatch,
+    trend_score: t.results.trend, market_share: t.results.marketShare,
+  }
+  const descriptions = [t.results.formulaLegendProfile, t.results.formulaLegendSkill, t.results.formulaLegendTrend, t.results.formulaLegendShare]
+  const hasWeights = components.every(item => item.weight != null)
   return (
-    <div className={styles.formulaBanner}>
-      <div className={styles.formulaTitle}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: 6 }}>
-          <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
-        </svg>
-        <strong>{t.results.formulaTitle}</strong>
-      </div>
-      
-      <div className={styles.formulaBody}>
-        <code>
-          S(p) = {w_prof} • S_profile(p) + {w_skill} • S_skill(p) + {w_trend} • T_trend(p) + {w_share} • M_share(p)
-        </code>
-      </div>
-
+    <section className={styles.formulaBanner} aria-label={t.review.scoreTitle}>
+      <h2 className={styles.formulaTitle}>{t.review.scoreTitle}</h2>
+      <p className={styles.methodNote}>{t.review.scoreNote}</p>
       <div className={styles.formulaLegend}>
-        <div className={styles.legendItem}>
-          <span className={styles.legendDot} style={{ background: '#5b8dee' }} />
-          <div>
-            <strong>S_profile ({pct_prof}%):</strong> {t.results.formulaLegendProfile}
+        {components.map(item => (
+          <div key={item.key} className={styles.signalContribution}>
+            <strong><i style={{ background: BAR_COLORS[item.key] }} />{labels[item.key]}</strong>
+            <span>{item.weight != null ? `${Math.round(item.weight * 100)}% ${t.review.weight.toLowerCase()}` : '—'}</span>
+            <b>{item.contribution == null ? '—' : item.contribution.toFixed(2)} {t.review.contribution}</b>
+            <small>{(item.value * 100).toFixed(2)} × {item.weight == null ? '—' : item.weight.toFixed(2)}</small>
           </div>
-        </div>
-        <div className={styles.legendItem}>
-          <span className={styles.legendDot} style={{ background: '#4caf82' }} />
-          <div>
-            <strong>S_skill ({pct_skill}%):</strong> {t.results.formulaLegendSkill}
-          </div>
-        </div>
-        <div className={styles.legendItem}>
-          <span className={styles.legendDot} style={{ background: '#9b6ddf' }} />
-          <div>
-            <strong>T_trend ({pct_trend}%):</strong> {t.results.formulaLegendTrend}
-          </div>
-        </div>
-        <div className={styles.legendItem}>
-          <span className={styles.legendDot} style={{ background: '#f0943a' }} />
-          <div>
-            <strong>M_share ({pct_share}%):</strong> {t.results.formulaLegendShare}
-          </div>
-        </div>
+        ))}
       </div>
-
-      <div className={styles.formulaFootnote}>
-        * {t.results.formulaFootnote}
-      </div>
-    </div>
-  );
+      <details className={styles.methodDetails}>
+        <summary>{t.review.calculation}</summary>
+        <p>{t.review.normalization}</p>
+        {hasWeights ? <code className={styles.scoreEquation}>
+          {components.map(item => `${(item.value * 100).toFixed(2)} × ${item.weight.toFixed(2)}`).join(' + ')} ≈ {formatMatchScore(results.final_scores[profession])}
+        </code> : <p>{t.review.missingWeights}</p>}
+        <div className={styles.methodTableWrap}>
+          <table className={styles.methodTable}>
+            <thead><tr><th>{t.results.factors}</th><th>{t.review.raw}</th><th>{t.review.normalizedValue}</th></tr></thead>
+            <tbody>{components.map(item => <tr key={item.key}>
+              <th scope="row">{labels[item.key]}</th><td>{item.raw.toPrecision(5)}</td><td>{(item.value * 100).toFixed(2)} / 100</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        {components.map((item, index) => <p key={item.key}><strong>{labels[item.key]}: </strong>{descriptions[index]}</p>)}
+        <p>{t.review.marketNote}</p>
+      </details>
+    </section>
+  )
 }
 
 /* ─── Main Component ─────────────────────────────────────────── */
-export default function Results({ results: initialResults, formData, onBack, onRetry, onNewAnalysis }) {
-  const { t, lang } = useApp()
+export default function Results({ results: initialResults, formData, onBack, onRetry, onNewAnalysis, onHistorySelect }) {
+  const { t, lang, llmProvider } = useApp()
+  const voiceSupported = LLM_PROVIDERS.find(p => p.id === llmProvider)?.voice
 
   const [results,      setResults]      = useState(initialResults)
   const [tab,          setTab]          = useState('best')
@@ -1545,6 +1551,31 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const textareaRef    = useRef(null)
   const abortRef       = useRef(null)
   const voiceRecorderRef = useRef(null)
+  const voiceAbortRef = useRef(null)
+  const aiVersionRef = useRef(0)
+
+  useEffect(() => {
+    const stopAI = () => {
+      aiVersionRef.current += 1
+      abortRef.current?.abort()
+      voiceAbortRef.current?.abort()
+      const recorder = voiceRecorderRef.current
+      voiceRecorderRef.current = null
+      recorder?.stop().catch(() => {})
+      setListening(false)
+      setVoiceNotice('')
+      setChatLoading(false)
+      setMessages(prev => prev.map(m => ({ ...m, streaming: false })))
+    }
+    window.addEventListener(LLM_SETTINGS_EVENT, stopAI)
+    return () => {
+      aiVersionRef.current += 1
+      window.removeEventListener(LLM_SETTINGS_EVENT, stopAI)
+      abortRef.current?.abort()
+      voiceAbortRef.current?.abort()
+      voiceRecorderRef.current?.stop().catch(() => {})
+    }
+  }, [])
 
   useEffect(() => {
     setResults(initialResults)
@@ -1562,7 +1593,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
     { key: 'skill_match',   label: t.results.skillMatch,      sortKey: 'skill',   max: 1   },
     { key: 'profile_match', label: t.results.classification,  sortKey: 'profile', max: 1   },
     { key: 'trend_score',   label: t.results.trend,           sortKey: 'trend',   max: 1   },
-    { key: 'market_share',  label: t.results.marketShare,     sortKey: 'market',  max: 100 },
+    { key: 'market_share',  label: t.results.marketShare,     sortKey: 'market',  max: 1 },
   ]
 
   const SORT_OPTIONS = [
@@ -1577,20 +1608,18 @@ export default function Results({ results: initialResults, formData, onBack, onR
     { key: 'best',    label: t.results.tabs.best    },
     { key: 'all',     label: t.results.tabs.all     },
     { key: 'roadmap', label: t.results.tabs.roadmap },
+    { key: 'history', label: t.review.historyTab },
   ]
 
-  const allProfessions = Object.entries(results.final_scores)
-    .map(([name, final_score]) => ({
-      name,
-      final_score,
-      skill_match:   results.skill_scores?.[name]    ?? 0,
-      profile_match: results.classification_scores?.[name] ?? 0,
-      trend_score:   results.demand_scores?.[name]?.trend_score   ?? 0,
-      market_share:  results.demand_scores?.[name]?.market_share != null
-        ? parseFloat(results.demand_scores[name].market_share * 100).toFixed(1)
-        : null,
+  const allProfessions = Object.entries(results.final_scores).map(([name, final_score]) => {
+    const breakdown = getScoreBreakdown(results, name)
+    return {
+      name, final_score,
+      ...Object.fromEntries(breakdown.map(item => [item.key, item.value])),
+      contributions: Object.fromEntries(breakdown.map(item => [item.key, item.contribution])),
       vacancies_per_week: results.demand_scores?.[name]?.predicted_vacancies ?? null,
-    }))
+    }
+  })
 
   const sorted = [...allProfessions].sort((a, b) => {
     if (sortBy === 'score')   return (b.final_score ?? 0)  - (a.final_score ?? 0)
@@ -1795,7 +1824,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
   /* ─── Send message ─────────────────────────────────────────── */
   const sendMessage = async (overrideMsg) => {
     const msg = (overrideMsg ?? input).trim()
-    if (!msg || chatLoading) return
+    if (!llmProvider || !msg || chatLoading) return
+    const version = aiVersionRef.current
 
     if (!isCareerChatAllowed(msg)) {
       setMessages(p => [
@@ -1808,7 +1838,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
     }
 
     const userMsg         = { role: 'user', content: msg }
-    const historySnapshot = [...messages, userMsg]
+    // The first message is the local welcome text, not a provider conversation turn.
+    const historySnapshot = messages.slice(1).filter(m => m.content)
 
     setMessages(p => [...p, userMsg, { role: 'assistant', content: '', streaming: true }])
     setInput('')
@@ -1843,27 +1874,25 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
       while (true) {
         const { done, value } = await reader.read()
+        if (controller.signal.aborted) return
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split(/(?=data:)/)
-        buffer = (parts[parts.length - 1]?.endsWith('\n') || parts[parts.length - 1]?.includes('[DONE]'))
-          ? ''
-          : (parts.pop() ?? '')
+        const parts = buffer.split(/\r?\n\r?\n/)
+        buffer = parts.pop() || ''
 
         for (const part of parts) {
           const text = part.replace(/^data:\s*/, '').trim()
           if (!text || text === '[DONE]') continue
 
-          try {
-            const data = JSON.parse(text)
-            if (data.type === 'thought') {
-              thoughts += data.content
-            } else if (data.content) {
-              full += data.content
-            }
-          } catch {
-            full += text
+          const data = JSON.parse(text)
+          if (data.type === 'error') {
+            throw Object.assign(new Error('AI request failed.'), { code: data.code })
+          }
+          if (data.type === 'thought') {
+            thoughts += data.content
+          } else if (data.content) {
+            full += data.content
           }
 
           setMessages(p => {
@@ -1885,16 +1914,16 @@ export default function Results({ results: initialResults, formData, onBack, onR
       })
 
     } catch (err) {
-      if (err.name === 'AbortError') return
+      if (err.name === 'AbortError' || version !== aiVersionRef.current) return
       setMessages(p => {
         const updated = [...p]
         updated[updated.length - 1] = {
-          role: 'assistant', content: t.errors.api, thoughts: '', streaming: false,
+          role: 'assistant', content: t.llm.errors[err.code] || t.llm.errors.provider_unavailable, thoughts: '', streaming: false,
         }
         return updated
       })
     } finally {
-      setChatLoading(false)
+      if (version === aiVersionRef.current && abortRef.current === controller) setChatLoading(false)
     }
   }
 
@@ -1913,7 +1942,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
         s.courses.forEach(c => lines.push(`    ${c.title} (${c.platform})`))
       })
     })
-    copyText(`${t.results.roadmap}: ${profLabel(top_profession)}\n\n` + lines.join('\n'))
+    copyText(`${t.results.roadmap}: ${profLabel(activeProfName)}\n\n` + lines.join('\n'))
     setCopied('roadmap')
     setTimeout(() => setCopied(null), 2000)
   }
@@ -1921,7 +1950,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const handleCopyCourse = (event, course, key) => {
     event.preventDefault()
     event.stopPropagation()
-    const text = course.url ? `${course.title} (${course.platform}): ${course.url}` : `${course.title} (${course.platform})`
+    const providerUrl = getCourseProviderUrl(course)
+    const text = providerUrl ? `${course.title} (${course.platform}): ${providerUrl}` : `${course.title} (${course.platform})`
     copyText(text)
     setCopiedMsg(key)
     setTimeout(() => setCopiedMsg(null), 2000)
@@ -2020,9 +2050,9 @@ export default function Results({ results: initialResults, formData, onBack, onR
   }, [courseFilters, lang, gapSkillsList, rawRoadmap])
 
   const handleShare = () => {
-    const text = `${t.results.selectedCareer}: ${profLabel(top_profession)} ${activeProf?.final_score ? Math.round(activeProf.final_score * 100) + '%' : ''} - CareerPath`
+    const text = `${t.results.selectedCareer}: ${profLabel(activeProfName)} · ${t.review.scoreTitle}: ${activeProf?.final_score != null ? formatMatchScore(activeProf.final_score) : '—'} · CareerFlow · https://careerflow.live`
     if (navigator.share) {
-      navigator.share({ title: 'CareerPath', text }).catch(() => {})
+      navigator.share({ title: 'CareerFlow', text }).catch(() => {})
     } else {
       copyText(text)
       setCopied('share')
@@ -2062,6 +2092,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
   const openHistoryItem = item => {
     setResults(item.results)
+    onHistorySelect?.({ ...item.results, _isDemo: item.results._isDemo || isDemoSession(item.results.session_id) })
     setSelectedProf(item.selectedProfession || item.top_profession)
     setDoneSkills(new Set(item.progress?.done || []))
     setCategoryOrder(item.progress?.categoryOrder || [])
@@ -2078,10 +2109,24 @@ export default function Results({ results: initialResults, formData, onBack, onR
   }
 
   const clearHistory = () => {
+    if (!window.confirm(t.review.clearHistoryConfirm)) return
     setHistory([])
     try { localStorage.removeItem('career-recommendation-history') } catch {}
     clearRecommendationHistory().catch(() => {})
   }
+
+  const renderHistory = items => (
+    <div className={styles.historyList}>
+      {items.map(item => (
+        <button key={item.id} className={styles.historyItem} onClick={() => openHistoryItem(item)}>
+          <span>{profLabel(item.selectedProfession || item.top_profession)}</span>
+          {(item.results?._isDemo || isDemoSession(item.results?.session_id)) && <strong className={styles.demoBadge}>{t.review.demoLabel}</strong>}
+          <small>{t.review.historyTime}: {new Date(item.createdAt).toLocaleString(lang === 'kk' ? 'kk-KZ' : lang === 'ru' ? 'ru-RU' : 'en-GB', { dateStyle: 'medium', timeStyle: 'medium' })}</small>
+          <small>{item.results?._formData?.skills?.length ?? 0} {t.review.historySkills} · #{item.id.slice(0, 8)}</small>
+        </button>
+      ))}
+    </div>
+  )
 
   const moveCategory = (fromCat, toCat) => {
     if (!fromCat || !toCat || fromCat === toCat) return
@@ -2120,6 +2165,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
   }
 
   const startVoiceInput = async () => {
+    if (!llmProvider || !voiceSupported) return
+    const version = aiVersionRef.current
     if (!navigator.mediaDevices?.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
       setVoiceNotice(t.results.voiceUnsupported)
       return
@@ -2132,7 +2179,9 @@ export default function Results({ results: initialResults, formData, onBack, onR
     }
 
     try {
-      voiceRecorderRef.current = await createWavRecorder()
+      const recorder = await createWavRecorder()
+      if (version !== aiVersionRef.current) { await recorder.stop(); return }
+      voiceRecorderRef.current = recorder
       setListening(true)
       setVoiceNotice(t.results.voiceListening)
     } catch (err) {
@@ -2148,6 +2197,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
   }
 
   const stopVoiceInput = async () => {
+    const version = aiVersionRef.current
     const recorder = voiceRecorderRef.current
     voiceRecorderRef.current = null
     setListening(false)
@@ -2156,11 +2206,15 @@ export default function Results({ results: initialResults, formData, onBack, onR
     try {
       setVoiceNotice(t.results.voiceTranscribing)
       const audio = await recorder.stop()
+      if (version !== aiVersionRef.current) return
       if (audio.rms < 0.004) {
         setVoiceNotice(t.results.voiceNoSpeech)
         return
       }
-      const data = await transcribeVoice(audio.blob, lang)
+      const controller = new AbortController()
+      voiceAbortRef.current = controller
+      const data = await transcribeVoice(audio.blob, lang, controller.signal)
+      if (version !== aiVersionRef.current) return
       const text = (data.text || '').trim()
       if (!text) {
         setVoiceNotice(t.results.voiceNoSpeech)
@@ -2169,8 +2223,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
       setInput(text)
       setVoiceNotice('')
       resizeChatInput()
-    } catch {
-      setVoiceNotice(t.results.voiceError)
+    } catch (err) {
+      if (err.name !== 'AbortError') setVoiceNotice(t.llm.errors[err.code] || t.results.voiceError)
     }
   }
 
@@ -2223,23 +2277,23 @@ export default function Results({ results: initialResults, formData, onBack, onR
         <div class="score-bar">
           <div class="score-fill" style="width:${Math.round(parseFloat(activeProf[r.key]) / r.max * 100)}%;background:${BAR_COLORS[r.key]}"></div>
         </div>
-        <span class="score-pct">${Math.round(parseFloat(activeProf[r.key]) / r.max * 100)}%</span>
+        <span class="score-pct">${Math.round(parseFloat(activeProf[r.key]) / r.max * 100)} / 100</span>
       </div>
     </div>`).join('')
 
   const allScoreLines = sorted.map(p => {
-    const factors = rows.map(r => `<span style="background:${BAR_COLORS[r.key]};width:${Math.max(4, pct(p[r.key], r.max) / rows.length)}%"></span>`).join('')
+    const factors = rows.map(r => `<span style="background:${BAR_COLORS[r.key]};width:${(p.contributions?.[r.key] ?? 0)}%"></span>`).join('')
     return `<div class="all-score-row">
       <span class="all-score-name">${esc(profLabel(p.name))}</span>
       <div class="all-score-track"><i style="width:${pct(p.final_score)}%"></i><b>${factors}</b></div>
-      <span class="all-score-pct">${pct(p.final_score)}%</span>
+      <span class="all-score-pct">${formatMatchScore(p.final_score)}</span>
     </div>`
   }).join('')
 
   const scoreCircles = sorted.map(p => {
     const score = pct(p.final_score)
     return `<div class="score-circle">
-      <div class="circle" style="--score:${score * 3.6}deg"><span>${score}%</span></div>
+      <div class="circle" style="--score:${score * 3.6}deg"><span>${formatMatchPoints(p.final_score)}<small>/100</small></span></div>
       <strong>${esc(profLabel(p.name))}</strong>
     </div>`
   }).join('')
@@ -2262,7 +2316,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
     .map(r => `<div class="explain-row">
       <span>${esc(r.label)}</span>
       <div><i style="width:${pct(activeProf[r.key], r.max)}%;background:${BAR_COLORS[r.key]}"></i></div>
-      <b>${pct(activeProf[r.key], r.max)}%</b>
+      <b>${pct(activeProf[r.key], r.max)} / 100</b>
     </div>`)
     .join('')
 
@@ -2302,7 +2356,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
     : new Date().toLocaleDateString()
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>${t.results.pdfRoadmap}: ${esc(profLabel(top_profession))}</title>
+  <title>${t.results.pdfRoadmap}: ${esc(profLabel(activeProfName))}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,Segoe UI,sans-serif;color:#1e1e1c;font-size:13px;line-height:1.5}
@@ -2320,7 +2374,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
     .circle span{width:29px;height:29px;border-radius:50%;background:#fff;display:grid;place-items:center;font-size:9px;font-family:monospace;font-weight:700}
     .score-circle strong{font-size:10px;line-height:1.25}
     .all-scores{display:flex;flex-direction:column;gap:7px;margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid #eee}
-    .all-score-row{display:grid;grid-template-columns:150px 1fr 38px;gap:10px;align-items:center}
+    .all-score-row{display:grid;grid-template-columns:150px 1fr 88px;gap:10px;align-items:center}
     .all-score-name{font-size:11px;color:#444}
     .all-score-track{position:relative;height:8px;background:#edf1f7;border-radius:99px;overflow:hidden}
     .all-score-track>i{position:absolute;inset:0 auto 0 0;background:#5b8dee;border-radius:99px}
@@ -2332,7 +2386,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
     .score-bar-wrap{flex:1;display:flex;align-items:center;gap:8px}
     .score-bar{flex:1;height:5px;background:#eee;border-radius:3px;overflow:hidden}
     .score-fill{height:100%;border-radius:3px}
-    .score-pct{font-size:11px;font-family:monospace;color:#444;min-width:34px;text-align:right}
+    .score-pct{font-size:11px;font-family:monospace;color:#444;min-width:66px;text-align:right}
     .explain-copy{font-size:12px;color:#555;margin-bottom:10px}
     .explain{display:flex;flex-direction:column;gap:7px;margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid #eee}
     .explain-row{display:grid;grid-template-columns:130px 1fr 34px;gap:10px;align-items:center}
@@ -2368,17 +2422,17 @@ export default function Results({ results: initialResults, formData, onBack, onR
   </style></head>
   <body>
     <div class="header">
-      <span class="header-title">CareerPath - ${t.results.pdfRoadmap}</span>
+      <span class="header-title">CareerFlow - ${t.results.pdfRoadmap}</span>
       <span class="header-sub">${esc(headerSub)}</span>
     </div>
     <div class="body">
-      <div class="prof-name">${esc(profLabel(top_profession))}</div>
-      <div class="prof-sub">${t.results.pdfSubtitle}</div>
+      <div class="prof-name">${esc(profLabel(activeProfName))}</div>
+      <div class="prof-sub">${t.results.pdfSubtitle}</div><p>${esc(t.review.scoreNote)}</p><p>${esc(t.review.marketNote)}</p>
       <div class="section-title">${t.results.pdfAllScores}</div>
       <div class="score-circles">${scoreCircles}</div>
       <div class="all-scores">${allScoreLines}</div>
       <div class="section-title">${t.results.pdfScores}</div>
-      <div class="scores">${scoreLines}</div>
+      <div class="scores">${scoreLines}</div><p>${esc(t.review.normalization)}</p>
       <div class="section-title">${t.results.pdfExplain}</div>
       <div class="explain-copy">${esc(t.results.whyTop ? t.results.whyTop(profLabel(activeProf.name)) : '')}</div>
       <div class="explain">${explainRows}</div>
@@ -2386,7 +2440,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
       <div class="gap-summary">${gapRows}</div>
       <div class="section-title">${t.results.pdfProgress}</div>
       <div class="progress-line"><span>${esc(t.results.roadmapProgress(doneRoadmapSteps, totalRoadmapSteps))}</span><i><b style="width:${totalRoadmapSteps ? Math.round(doneRoadmapSteps / totalRoadmapSteps * 100) : 0}%"></b></i></div>
-      <div class="section-title">${t.results.pdfRoadmap}</div>
+      <div class="section-title">${t.results.pdfRoadmap}</div><p>${esc(t.review.roadmapNote)}</p>
       ${roadmapSections}
       <div class="footer">${t.results.pdfGenerated}</div>
     </div>
@@ -2507,7 +2561,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
                 >
                   <span className={styles.sidebarScoreKey}>{profLabel(p.name)}</span>
                   <span className={styles.sidebarScoreVal}>
-                    {typeof p.final_score === 'number' ? Math.round(p.final_score * 100) + '%' : '—'}
+                    {typeof p.final_score === 'number' ? formatMatchScore(p.final_score) : '—'}
                   </span>
                 </div>
               ))}
@@ -2537,17 +2591,11 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
         <div className={styles.sidebarSection}>
           <div className={styles.sidebarLabel}>{t.results.historyTitle}</div>
+          <p className={styles.historyNote}>{t.review.historyNote}</p>
           {history.length === 0 ? (
             <div className={styles.sidebarEmpty}>{t.results.noHistory}</div>
           ) : (
-            <div className={styles.historyList}>
-              {history.slice(0, 4).map(item => (
-                <button key={item.id} className={styles.historyItem} onClick={() => openHistoryItem(item)}>
-                  <span>{profLabel(item.selectedProfession || item.top_profession)}</span>
-                  <small>{t.results.savedAt}: {new Date(item.createdAt).toLocaleDateString()}</small>
-                </button>
-              ))}
-            </div>
+            renderHistory(history.slice(0, 4))
           )}
           {history.length > 0 && (
             <button className={styles.historyClear} onClick={clearHistory}>{t.results.clearHistory}</button>
@@ -2555,6 +2603,9 @@ export default function Results({ results: initialResults, formData, onBack, onR
         </div>
 
         <div className={styles.sidebarActions}>
+          <div style={{ marginBottom: 6, fontSize: '0.72rem', color: 'var(--text-3)', lineHeight: 1.35 }}>
+            {t.review.sharedSaveWarning || t.review.historyNote}
+          </div>
           <button className={styles.actionBtn} onClick={saveCurrentResult}>
             <CheckIcon size={12}/>
             {savedCurrent ? t.results.savedResult : t.results.saveResult}
@@ -2591,7 +2642,15 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
       {/* ─ MAIN ─ */}
       <main className={styles.main}>
-        <ScoringFormulaHeader results={results} t={t} />
+        <header className={styles.resultsIntro}>
+          <h1>{t.results.title}</h1>
+          {(results._isDemo || isDemoSession(results.session_id)) && <span className={styles.demoBadge}>{t.review.demoLabel}</span>}
+          <p>{t.review.scoreNote}</p>
+          <div className={styles.mobileActions}>
+            <button className={styles.actionBtn} onClick={onRetry || onBack}>{t.results.newAnalysis}</button>
+            <button className={styles.actionBtn} onClick={handleExportPdf} disabled={pdfLoading}>{t.results.downloadPdf}</button>
+          </div>
+        </header>
         <div className={styles.tabsSticky}>
           <div className={styles.tabs}>
             {tabs.map(({ key, label }) => (
@@ -2606,9 +2665,13 @@ export default function Results({ results: initialResults, formData, onBack, onR
         <div className={styles.tabContent} key={`${tab}${activeProfName}${cardKey}`}>
 
           {/* ─ BEST MATCH ─ */}
+          {tab === 'history' && <section className={styles.bestCard}>
+            <h2>{t.results.historyTitle}</h2><p className={styles.methodNote}>{t.review.historyNote}</p>
+            {history.length ? renderHistory(history) : <p>{t.results.noHistory}</p>}
+          </section>}
           {tab === 'best' && activeProf && (() => {
             const rows = orderedRows(ALL_SCORE_ROWS, 'score')
-            const activeRank = Math.max(1, sorted.findIndex(p => p.name === activeProf.name) + 1)
+            const activeRank = [...allProfessions].sort((a, b) => b.final_score - a.final_score).findIndex(p => p.name === activeProf.name) + 1
             return (
               <div className={styles.bestStack}>
               <div className={styles.bestCard}>
@@ -2616,7 +2679,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
                   <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                     <ProgressRing value={activeProf.final_score ?? 0} size={72} stroke={5}
                       color="#5b8dee" animKey={animKey}
-                      tooltipText={`${profLabel(activeProf.name)}\n${t.results.scoreOverview}: ${pct(activeProf.final_score)}%`}/>
+                      tooltipText={`${profLabel(activeProf.name)}\n${t.results.scoreOverview}: ${formatMatchScore(activeProf.final_score)}`}/>
                     <div>
                       <div className={styles.bestRank}>#{activeRank} {activeProf.name === top_profession ? t.results.bestMatch : t.results.selectedProfession}</div>
                       <div className={styles.bestName}>{profLabel(activeProf.name)}</div>
@@ -2641,6 +2704,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
                   </div>
                 </div>
 
+                <ScoringFormulaHeader results={results} profession={activeProf.name} t={t} />
                 {viewMode === 'bars' && (
                   <div className={styles.chartStack}>
                     <ProfessionBarsChart professions={sorted} rows={rows} profLabel={profLabel} t={t} animKey={animKey} onSelect={handleSelectProf}/>
@@ -2675,10 +2739,9 @@ export default function Results({ results: initialResults, formData, onBack, onR
                   </div>
                 )}
 
-                {activeProf.vacancies_per_week && (
+                {activeProf.vacancies_per_week != null && (
                   <div className={styles.demandRow}>
                     <div className={styles.demandItem}>
-                      <VacancyTrend value={activeProf.vacancies_per_week}/>
                       {activeProf.vacancies_per_week.toLocaleString()} {t.results.vacanciesWeek}
                     </div>
                   </div>
@@ -2716,24 +2779,23 @@ export default function Results({ results: initialResults, formData, onBack, onR
                   const rows = orderedRows(ALL_SCORE_ROWS, sortBy)
                   const aKey = `${p.name}${sortBy}`
                   return (
-                    <div key={p.name} className={`${styles.profCard} ${i === 0 ? styles.profCardTop : ''}`}>
+                    <div key={p.name} className={`${styles.profCard} ${p.name === top_profession ? styles.profCardTop : ''}`}>
                       <div className={styles.profHeader}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <ProgressRing value={p.final_score ?? 0} size={40} stroke={3}
                             color={BAR_COLORS.skill_match} animKey={aKey}
-                            tooltipText={`${profLabel(p.name)}\n${t.results.scoreOverview}: ${pct(p.final_score)}%`}/>
+                            tooltipText={`${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}`}/>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span className={styles.profRank}>#{i+1}</span>
                             <span className={styles.profName}>{profLabel(p.name)}</span>
-                            {i === 0 && <span className={styles.topBadge}>{t.results.bestMatch.toUpperCase()}</span>}
+                            {p.name === top_profession && <span className={styles.topBadge}>{t.results.bestMatch.toUpperCase()}</span>}
                           </div>
                         </div>
                       </div>
                       <ProfScores p={p} rows={rows} animKey={aKey} lang={lang}/>
-                      {p.vacancies_per_week && (
+                      {p.vacancies_per_week != null && (
                         <div className={styles.demandRow}>
                           <div className={styles.demandItem}>
-                            <VacancyTrend value={p.vacancies_per_week}/>
                             {p.vacancies_per_week.toLocaleString()} {t.results.vacanciesWeek}
                           </div>
                         </div>
@@ -2749,7 +2811,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
           {tab === 'roadmap' && (
   <>
     <p className={styles.roadmapHint}>
-      {t.results.skillsToLearn} <strong>{profLabel(top_profession)}</strong>
+      {t.results.skillsToLearn} <strong>{profLabel(activeProfName)}</strong>
     </p>
     <div className={styles.roadmapProgressPanel}>
       <span>{t.results.roadmapProgress(doneRoadmapSteps, totalRoadmapSteps)}</span>
@@ -2757,6 +2819,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
         <i style={{ width: `${totalRoadmapSteps ? Math.round(doneRoadmapSteps / totalRoadmapSteps * 100) : 0}%` }}/>
       </div>
     </div>
+    <p className={styles.methodNote}>{t.review.roadmapMethod}</p>
+    <p className={styles.methodNote}>{t.review.roadmapNote}</p>
     <p className={styles.dragHint}>{t.results.dragHint}</p>
     <CourseFilters
       filters={courseFilters}
@@ -2844,6 +2908,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
                         {/* Clickable checkbox */}
                         <button
                           onClick={() => toggleSkill(cat, s.skill)}
+                          aria-label={cap(s.skill)}
+                          aria-pressed={isDone}
                           style={{
                             width: 18, height: 18, borderRadius: 4,
                             border: `1.5px solid ${isDone ? '#4caf82' : 'var(--border)'}`,
@@ -2921,8 +2987,10 @@ export default function Results({ results: initialResults, formData, onBack, onR
           </button>
         </div>
 
+        <LLMSettings />
         <div className={styles.chatMessages}>
-          {messages.length === 0 && (
+          {!llmProvider && <div className={styles.chatEmpty} role="status">{t.llm.noKey}</div>}
+          {llmProvider && messages.length === 0 && (
             <div className={styles.chatEmpty}>
               <span className={styles.chatEmptyIcon}>
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2">
@@ -2932,7 +3000,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
               <span>{t.results.askAnything}</span>
             </div>
           )}
-          {messages.map((m, i) => (
+          {llmProvider && messages.map((m, i) => (
             <div key={i} className={`${styles.msg} ${m.role === 'user' ? styles.msgUser : styles.msgAi}`}>
               <div className={styles.msgOuter}>
                 {m.thoughts && !m.streaming && (
@@ -2968,7 +3036,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
           ))}
 
           {/* Suggestions */}
-          {messages.length === 1 && messages[0]?.role === 'assistant' && !messages[0]?.streaming && (
+          {llmProvider && messages.length === 1 && messages[0]?.role === 'assistant' && !messages[0]?.streaming && (
             <div className={styles.chatSuggestions}>
               {t.results.suggestions.map(q => (
                 <button key={q} className={styles.suggestion} onClick={() => sendMessage(q)}>{q}</button>
@@ -2989,10 +3057,12 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
         <div className={styles.chatBottom}>
           <div className={styles.chatToolbar}>
-            <DeepModeBtn active={deepMode} onClick={() => setDeepMode(v => !v)} lang={lang} t={t}/>
+            <DeepModeBtn active={deepMode} disabled={!llmProvider} onClick={() => setDeepMode(v => !v)} lang={lang} t={t}/>
             <button
               className={`${styles.voiceBtn} ${listening ? styles.voiceBtnActive : ''}`}
               onClick={listening ? stopVoiceInput : startVoiceInput}
+              disabled={!llmProvider || !voiceSupported}
+              aria-label={t.results.voiceRecord}
               title={listening ? t.results.voiceStop : t.results.voiceRecord}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -3010,12 +3080,14 @@ export default function Results({ results: initialResults, formData, onBack, onR
               </svg>
             </button>
           </div>
-          <div className={styles.chatScope}>{voiceNotice || t.results.assistantScope}</div>
+          <div className={styles.chatScope}>{voiceNotice || (llmProvider && !voiceSupported ? t.llm.voiceGemini : t.results.assistantScope)}</div>
           <div className={styles.chatInput}>
             <textarea
               ref={textareaRef}
               className={styles.chatInputField}
               value={input}
+              disabled={!llmProvider}
+              aria-label={t.results.chatPlaceholder}
               rows={1}
               onChange={e => {
                 setInput(e.target.value)
@@ -3027,7 +3099,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
               }}
               placeholder={t.results.chatPlaceholder}
             />
-            <button className={styles.chatSend} onClick={() => sendMessage()} disabled={chatLoading || !input.trim()}>
+            <button className={styles.chatSend} aria-label={t.results.chatSend} onClick={() => sendMessage()} disabled={!llmProvider || chatLoading || !input.trim()}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
               </svg>

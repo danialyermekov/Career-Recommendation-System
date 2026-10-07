@@ -1,11 +1,12 @@
 from pathlib import Path
 from urllib.parse import unquote
 from typing import Any
-from fastapi import FastAPI, HTTPException, Request, Body
+from fastapi import FastAPI, HTTPException, Request, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from schemas import StudentProfile, ChatRequest, RoadmapProgressRequest, CourseFilterPreferencesRequest
-import asyncio
+import json
+from services.llm import LLMError, safe_llm_error, validate_credentials
 from top_profession import get_top_profession
 from config import CLASSIFIER_COEF, SKILL_MATCHER_COEF, DEMAND_TREND_COEF, DEMAND_MARKET_SHARE_COEF
 from uuid import uuid4
@@ -56,7 +57,7 @@ OFF_TOPIC_RESPONSES = {
     "en": "I can only help with career recommendations, skill gaps, learning roadmaps, professions, courses, and your system results.",
 }
 
-app = FastAPI(title='IT Career Advisor API')
+app = FastAPI(title='CareerFlow API')
 init_db()
 
 app.add_middleware(
@@ -118,8 +119,22 @@ def get_llm():
     return llm
 
 
-def is_llm_not_configured_error(error: Exception) -> bool:
-    return error.__class__.__name__ == "LLMNotConfiguredError"
+def get_llm_credentials(request: Request) -> tuple[str, str]:
+    # Read manually so validation errors never echo secret headers in a 422 body.
+    try:
+        return validate_credentials(
+            request.headers.get("x-llm-provider", ""),
+            request.headers.get("x-llm-api-key", ""),
+        )
+    except LLMError as error:
+        raise HTTPException(status_code=error.status_code, detail={
+            "code": error.code, "message": str(error),
+        }) from None
+
+
+def llm_http_error(error: Exception) -> HTTPException:
+    safe = safe_llm_error(error)
+    return HTTPException(status_code=safe.status_code, detail={"code": safe.code, "message": str(safe)})
 
 
 def _is_career_chat_allowed(message: str) -> bool:
@@ -339,108 +354,72 @@ def save_course_filters(session_id: str, request: CourseFilterPreferencesRequest
 
 
 @app.post('/chat')
-def chat(request: ChatRequest):
-    '''Generate a response from the LLM based on the provided context, conversation history, and user message.'''
+def chat(request: ChatRequest, credentials: tuple[str, str] = Depends(get_llm_credentials)):
     if not _is_career_chat_allowed(request.message):
         return {'response': _off_topic_response(request.lang)}
 
-    context = session_store.get(request.session_id, "No context available.")
-    llm_service = get_llm()
+    provider, api_key = credentials
     try:
-        response = llm_service.chat(
-            context=context,
-            history=request.history,
-            message=request.message,
+        response = get_llm().chat(
+            context=session_store.get(request.session_id, "No context available."),
+            history=[item.model_dump() for item in request.history],
+            message=request.message, provider=provider, api_key=api_key,
         )
         return {'response': response}
-    except Exception as e:
-        if is_llm_not_configured_error(e):
-            raise HTTPException(status_code=503, detail=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as error:
+        raise llm_http_error(error) from None
 
 
 @app.post('/voice/transcribe')
-async def transcribe_voice(request: Request, lang: str = 'en'):
+async def transcribe_voice(
+    request: Request, lang: str = 'en',
+    credentials: tuple[str, str] = Depends(get_llm_credentials),
+):
     content = await request.body()
     if not content:
         raise HTTPException(status_code=400, detail="Empty audio.")
 
+    provider, api_key = credentials
     mime_type = request.headers.get("content-type", "audio/wav").split(";")[0] or "audio/wav"
     try:
-        text = get_llm().transcribe_audio(content, mime_type=mime_type, lang=lang)
+        # The SDK is synchronous; keep provider I/O off the event loop.
+        from starlette.concurrency import run_in_threadpool
+
+        text = await run_in_threadpool(
+            get_llm().transcribe_audio, content, mime_type=mime_type, lang=lang,
+            provider=provider, api_key=api_key,
+        )
         return {"text": text}
-    except Exception as e:
-        if is_llm_not_configured_error(e):
-            raise HTTPException(status_code=503, detail=str(e))
-        raise HTTPException(status_code=500, detail=f"Could not transcribe voice input: {e}")
+    except Exception as error:
+        raise llm_http_error(error) from None
+
 
 @app.post('/chat/stream')
-async def chat_stream(request: ChatRequest):
-    '''Generate a streaming response from the LLM, yielding chunks of text as they are generated. If `deep` is True, include the model's thoughts in the stream.'''
-    if not _is_career_chat_allowed(request.message):
-        async def off_topic():
-            yield f"data: {_off_topic_response(request.lang)}\n\n"
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(
-            off_topic(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            }
-        )
-
+def chat_stream(request: ChatRequest, credentials: tuple[str, str] = Depends(get_llm_credentials)):
+    provider, api_key = credentials
     context = session_store.get(request.session_id, "No context available.")
-    llm_service = get_llm()
-    try:
-        llm_service.ensure_configured()
-    except Exception as e:
-        if is_llm_not_configured_error(e):
-            raise HTTPException(status_code=503, detail=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
 
-    async def generate():
+    def generate():
         try:
-            loop = asyncio.get_event_loop()
-            queue = asyncio.Queue()
-
-            def run_stream():
-                try:
-                    for chunk in llm_service.chat_stream(
-                        context=context,
-                        history=request.history,
-                        message=request.message,
-                        deep=request.deep
-                    ):
-                        loop.call_soon_threadsafe(queue.put_nowait, chunk)
-                except Exception as e:
-                    loop.call_soon_threadsafe(queue.put_nowait, f"__ERROR__: {e}")
-                finally:
-                    loop.call_soon_threadsafe(queue.put_nowait, None)
-
-            loop.run_in_executor(None, run_stream)
-
-            while True:
-                chunk = await queue.get()
-                if chunk is None:
-                    yield "data: [DONE]\n\n"
-                    break
-                yield f"data: {chunk}\n\n"
-                await asyncio.sleep(0)
-
-        except Exception as e:
-            yield f"data: Error: {str(e)}\n\n"
+            if not _is_career_chat_allowed(request.message):
+                yield f"data: {json.dumps({'type': 'text', 'content': _off_topic_response(request.lang)})}\n\n"
+            else:
+                # StreamingResponse advances sync iterators in its thread pool.
+                yield from (
+                    f"data: {chunk}\n\n"
+                    for chunk in get_llm().chat_stream(
+                        context=context, history=[item.model_dump() for item in request.history],
+                        message=request.message, deep=request.deep, provider=provider, api_key=api_key,
+                    )
+                )
+        except Exception as error:
+            safe = safe_llm_error(error)
+            yield f"data: {json.dumps({'type': 'error', 'code': safe.code, 'content': str(safe)})}\n\n"
+        yield "data: [DONE]\n\n"
 
     return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",  
-        }
+        generate(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

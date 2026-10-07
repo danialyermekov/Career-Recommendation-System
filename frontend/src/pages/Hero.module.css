@@ -221,6 +221,70 @@
 
 .cta:active { transform: translateY(0) scale(.99); }
 
+.ctaGroup { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.secondaryCta {
+  min-height: 48px; padding: 10px 18px; border: 1px solid var(--border-hover);
+  border-radius: var(--radius-md); background: var(--panel-strong); color: var(--text);
+  font-size: .9rem; font-weight: 650;
+}
+
+.metrics .metricText {
+  font-size: 1rem;
+  line-height: 1.3;
+}
+.secondaryCta:hover { border-color: var(--accent); }
+.explainer { max-width: 1280px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 48px); }
+.explainerSection { padding: 64px 0; border-top: 1px solid var(--border); scroll-margin-top: 90px; }
+.explainerSection h2 { font-size: clamp(1.6rem, 3vw, 2.4rem); line-height: 1.2; margin-bottom: 20px; }
+.sectionIntro { max-width: 850px; font-size: 1.05rem; color: var(--text-2); line-height: 1.75; margin-bottom: 28px; }
+.flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); list-style: none; gap: 22px; }
+.stepNumber { font-family: var(--font-mono); font-size: .82rem; color: var(--accent); display: block; margin-bottom: 12px; }
+.flow h3, .infoCard h3 { font-size: 1rem; line-height: 1.4; margin-bottom: 10px; }
+.flow p, .infoCard p, .contextNote, .sourceDetails { color: var(--text-2); font-size: .94rem; line-height: 1.7; }
+.signalGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.dataGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.infoCard { min-width: 0; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); }
+.sourceLink { display: inline-block; margin-top: 16px; color: var(--accent); font-size: .9rem; line-height: 1.5; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.contextNote { margin-top: 24px; max-width: 1000px; }
+.sourceDetails { margin-top: 24px; }
+.sourceDetails summary { cursor: pointer; color: var(--text); }
+.sourceDetails p { margin-top: 12px; }
+.sourceDetails code { overflow-wrap: anywhere; }
+.roadmapFlow { display: flex; flex-wrap: wrap; list-style: none; gap: 12px; }
+.roadmapFlow li { padding: 14px 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-strong); }
+.roadmapFlow li + li::before { content: '→'; margin-right: 14px; color: var(--accent); }
+.finalCta { text-align: center; }
+.finalCta p { color: var(--text-2); max-width: 720px; margin: 0 auto 24px; }
+.finalCta .ctaGroup { justify-content: center; margin-bottom: 24px; }
+.footer { padding: 24px 0 36px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; color: var(--text-2); font-size: .9rem; }
+.footer nav { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+.footer a, .footer button { color: var(--text-2); text-decoration: none; }
+.footer button { border: 0; background: none; padding: 0; font: inherit; cursor: pointer; }
+.footer a:hover, .footer button:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 4px; }
+.footer a:focus-visible, .footer button:focus-visible, .privacyDialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; border-radius: 2px; }
+.privacyDialog { margin: auto; width: min(640px, calc(100% - 32px)); max-height: calc(100dvh - 48px); padding: clamp(20px, 4vw, 32px); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text); overflow-y: auto; }
+.privacyDialog::backdrop { background: rgb(0 0 0 / 65%); }
+.privacyHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.privacyDialog h2 { font-size: 1.4rem; }
+.privacyDialog p { margin-bottom: 16px; color: var(--text-2); font-size: .95rem; line-height: 1.65; }
+.privacyDialog form { margin: 0; }
+.privacyDialog button { padding: 10px 20px; border: 1px solid var(--border-hover); border-radius: var(--radius-md); background: var(--bg-tertiary); color: var(--text); font: inherit; cursor: pointer; }
+.privacyDialog button:hover { border-color: var(--accent); }
+
+@media (max-width: 1050px) {
+  .flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .signalGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .explainerSection { padding: 40px 0; }
+  .flow, .signalGrid, .dataGrid { grid-template-columns: 1fr; }
+  .flow li { border-left: 1px solid var(--border-hover); padding-left: 20px; }
+  .infoCard { padding: 20px; }
+  .roadmapFlow { flex-direction: column; }
+  .roadmapFlow li + li::before { content: '↓'; }
+  .ctaGroup { width: 100%; }
+}
+
 .scrollCue {
   display: inline-flex;
   align-items: center;

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { translations } from '../i18n'
+import { getLLMSettings, LLM_SETTINGS_EVENT } from '../utils/llmSettings'
 
 const AppContext = createContext()
 const LANGS = ['ru', 'en', 'kk']
@@ -13,9 +14,19 @@ const safeSave = (key, val) => {
 }
 
 export function AppProvider({ children }) {
+  // Only public metadata enters React context; the secret stays in module memory.
+  const [llmProvider, setLLMProvider] = useState(() => getLLMSettings()?.provider || null)
+  useEffect(() => {
+    const refresh = () => setLLMProvider(getLLMSettings()?.provider || null)
+    window.addEventListener(LLM_SETTINGS_EVENT, refresh)
+    return () => {
+      window.removeEventListener(LLM_SETTINGS_EVENT, refresh)
+    }
+  }, [])
   const [theme, setTheme] = useState(() => safeGet('theme', 'dark'))
   const [lang,  setLang]  = useState(() => {
-    const stored = safeGet('lang', 'ru')
+    const browserLang = navigator.language?.split('-')[0]
+    const stored = safeGet('lang', translations[browserLang] ? browserLang : 'en')
     return translations[stored] ? stored : 'ru'
   })
 
@@ -41,7 +52,7 @@ export function AppProvider({ children }) {
   const t = translations[lang] || translations.ru
 
   return (
-    <AppContext.Provider value={{ theme, toggleTheme, lang, toggleLang, setLanguage, t }}>
+    <AppContext.Provider value={{ theme, toggleTheme, lang, toggleLang, setLanguage, t, llmProvider }}>
       {children}
     </AppContext.Provider>
   )

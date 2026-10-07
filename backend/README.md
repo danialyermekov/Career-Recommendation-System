@@ -1,6 +1,6 @@
-# IT Career Advisor API
+# CareerFlow API
 
-An intelligent, machine-learning-powered backend service designed to provide personalized IT career guidance. The system analyzes a student's profile, skill set, and market demand to recommend the most optimal IT profession. Additionally, it features an interactive career advisor chat powered by Large Language Models (LLMs) to guide the user along a personalized learning roadmap.
+A backend for ranking supported IT career directions from a student's profile, skills and historical market signals. Roadmaps use deterministic skill-gap rules; an optional LLM advisor helps discuss the results.
 
 ---
 
@@ -8,9 +8,9 @@ An intelligent, machine-learning-powered backend service designed to provide per
 
 *   **Intelligent Career Matching**: Uses a pre-trained **CatBoost** classifier to predict the best-fit profession based on the user's background, GPA, and domain knowledge (Python, C++, SQL, Machine Learning, etc.).
 *   **Skill Assessment**: Ranks and matches users' skills against standard industry profiles.
-*   **Market Demand Evaluation**: Employs a **LightGBM** regressor trained on real-world vacancy data to weight recommendations based on current job market trends.
+*   **Market Demand Evaluation**: Uses **LightGBM** estimates from the checked-in 2023 weekly vacancy snapshot. These are historical market signals, not live job counts or current hiring growth.
 *   **Personalized Roadmaps & Courses**: Automatically generates tailored learning roadmaps and curates course recommendations to cover skill gaps.
-*   **LLM-Powered Interactive Chat**: Leverages **Google Gemini** to simulate an expert AI career advisor that provides natural-language guidance and answers questions in real-time, backed by the generated recommendation context.
+*   **LLM-Powered Interactive Chat**: Supports **Anthropic Claude and Google Gemini** with a user-provided session key to simulate an expert AI career advisor that provides natural-language guidance and answers questions in real-time, backed by the generated recommendation context.
 *   **FastAPI Backend**: Built asynchronously on FastAPI, ensuring fast, robust, and scalable API endpoints.
 
 ---
@@ -30,7 +30,7 @@ vacancy_data.csv # weekly aggergation of data_jobs dataset)
 │   ├── classifier.py         # Classifier ML model wrapper (CatBoost)
 │   ├── course_finder.py      # Roadmap and course extraction logic
 │   ├── demand.py             # Market demand computation (LightGBM)
-│   ├── llm.py                # LLM context builder and chat handler (Gemini)
+│   ├── llm.py                # LLM context builder and chat handler (Claude/Gemini)
 │   └── skill_matcher.py      # Skill comparison and scoring logic
 ├── tests/                    # Pytest test cases validating API limits & logic
 │   ├── test_api.py
@@ -55,7 +55,7 @@ The project requires **Python 3.10+** (specifically tested with python >= 3.14 s
 *   [FastAPI](https://fastapi.tiangolo.com/) & [Uvicorn](https://www.uvicorn.org/) for building the REST API
 *   [CatBoost](https://catboost.ai/) & [LightGBM](https://lightgbm.readthedocs.io/) for Machine Learning predictive modeling
 *   [Scikit-learn](https://scikit-learn.org/) for NLP (TF-IDF) and preprocessing pipelines
-*   [Google Generative AI](https://pypi.org/project/google-generativeai/) for the LLM chatbot integrations
+*   [Google Gen AI SDK](https://github.com/googleapis/python-genai) and [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-python) for the optional LLM integrations
 *   [Pandas](https://pandas.pydata.org/) for data manipulation and alignment
 
 ---
@@ -83,11 +83,8 @@ The project requires **Python 3.10+** (specifically tested with python >= 3.14 s
    pip install .
    ```
 
-4. **Set Up Environment Variables:**
-   Create a `.env` file in the project root to configure secrets for the LLM:
-   ```env
-   API_KEY=your_google_gemini_api_key
-   ```
+4. **Optional AI assistant:**
+   No LLM environment key is required or used. In the frontend AI assistant panel, select Claude or Gemini, enter a key, and select **Use key** for the currently loaded page. **Remove key** disables AI immediately. The frontend keeps secrets only in memory until a full refresh or page close, never in browser storage, and sends `X-LLM-Provider` and `X-LLM-API-Key` exclusively to `/chat`, `/chat/stream`, and `/voice/transcribe`. The backend uses short-lived SDK clients and stores no keys in SQLite, session state, files, or globals. Voice transcription is Gemini-only. Missing credentials return 400; provider errors are sanitized, including SSE failures. See the root [README](../README.md#ai-advisor) for the full flow and security limits, including XSS and HTTPS.
 
 ---
 
@@ -121,7 +118,7 @@ pytest tests/ -v
 
 ### `POST /chat`
 *   **Description**: Engage with the AI career advisor using a previously generated `session_id`. The advisor provides natural-language guidance informed by the student's exact learning gaps and recommended courses.
-*   **Payload**: Requires `session_id`, `history` (array of prior message objects), and the user's current `message`.
+*   **Payload**: Requires the provider/key headers above, `session_id`, `history` (array of prior message objects), and the user's current `message`.
 
 ---
 

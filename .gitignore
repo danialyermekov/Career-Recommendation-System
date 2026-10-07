@@ -1,7 +1,12 @@
 .env
 .env.*
 !.env.example
-backend/data/*.sqlite3
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/data/*.sqlite3*
+backend/data/combined_courses.csv
 frontend/build/
 backend/dev-server.*.log
 frontend/dev-server.*.log
+

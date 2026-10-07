@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AppProvider, useApp } from './context/AppContext'
 import Navbar from './components/Navbar'
 import Hero from './pages/Hero'
 import Form from './pages/Form'
 import Results from './pages/Results'
-import { getRecommendation } from './utils/api'
+import { getRecommendation, getRecommendationState } from './utils/api'
+import { rememberDemoSession, isDemoSession } from './utils/demoProfile'
 import './index.css'
 
 function AppInner() {
@@ -14,18 +15,52 @@ function AppInner() {
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState(null)
   const [error, setError] = useState('')
+  const [demo, setDemo] = useState(false)
 
-  const handleStart  = () => setPage('form')
-  const handleBack   = () => setPage('hero')
-  const handleToForm = () => setPage('form')
+  useEffect(() => {
+    let cancelled = false
+    const route = async () => {
+      const hash = window.location.hash
+      if (hash === '#profile') { setPage('form'); return }
+      const sessionId = hash.match(/^#results\/([a-zA-Z0-9-]+)$/)?.[1]
+      if (!sessionId) { setPage('hero'); return }
+      if (results?.session_id === sessionId) { setPage('results'); return }
+      setLoading(true)
+      try {
+        const state = await getRecommendationState(sessionId)
+        if (!cancelled && window.location.hash === hash) {
+          setResults({ ...state.results, _isDemo: isDemoSession(sessionId) })
+          setPage('results')
+        }
+      } catch {
+        if (!cancelled && window.location.hash === hash) { setError(t.errors.api); setPage('form') }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    route()
+    window.addEventListener('hashchange', route)
+    return () => { cancelled = true; window.removeEventListener('hashchange', route) }
+  }, [results, t.errors.api])
 
-  const handleSubmit = async (profile) => {
+  useEffect(() => { window.scrollTo(0, 0) }, [page])
+
+  const handleStart = () => { setDemo(false); setError(''); window.location.hash = 'profile'; setPage('form') }
+  const handleDemo = () => { setDemo(true); setError(''); window.location.hash = 'profile'; setPage('form') }
+  const handleBack = () => { window.location.hash = ''; setPage('hero') }
+  const showResult = data => {
+    setResults(data)
+    window.location.hash = `results/${data.session_id}`
+    setPage('results')
+  }
+
+  const handleSubmit = async (profile, isDemo = false) => {
     setLoading(true)
     setError('')
     try {
       const data = await getRecommendation(profile)
-      setResults({ ...data, _formData: profile })
-      setPage('results')
+      if (isDemo) rememberDemoSession(data.session_id)
+      showResult({ ...data, _formData: profile, _isDemo: isDemo })
     } catch (e) {
       setError(t.errors.api)
     } finally {
@@ -55,7 +90,7 @@ function AppInner() {
             exit="exit"
             transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
           >
-            <Hero onStart={handleStart} />
+            <Hero onStart={handleStart} onDemo={handleDemo} />
           </motion.main>
         )}
 
@@ -73,7 +108,7 @@ function AppInner() {
                 {error}
               </div>
             )}
-            <Form onSubmit={handleSubmit} loading={loading} />
+            <Form onSubmit={handleSubmit} loading={loading} initialDemo={demo} />
           </motion.main>
         )}
 
@@ -86,7 +121,7 @@ function AppInner() {
             exit="exit"
             transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
           >
-            <Results results={results} onBack={handleBack} onRetry={handleToForm} />
+            <Results results={results} onBack={handleBack} onRetry={handleStart} onHistorySelect={showResult} />
           </motion.main>
         )}
       </AnimatePresence>

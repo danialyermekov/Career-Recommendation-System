@@ -455,13 +455,14 @@ class BenchmarkSuite:
         print()
         return pd.DataFrame(records)
 
-    def run_llm_benchmark(self) -> dict[str, Any]:
+    def run_llm_benchmark(self, *, provider: str | None = None, api_key: str | None = None) -> dict[str, Any]:
         """Benchmarks the LLM response times.
 
         Tests regular /chat API and streaming generation.
         Includes Time-to-First-Token (TTFT) metrics for streaming.
         Uses high-fidelity simulated models with lognormal distributions
-        if credentials (GOOGLE_API_KEY / API_KEY) are absent.
+        unless provider and api_key are explicitly passed to this method.
+        Credentials stay local to this benchmark call and never enter its report.
 
         Returns:
             dict[str, Any]: Results dictionary containing overall status and latencies.
@@ -470,8 +471,7 @@ class BenchmarkSuite:
         print("4. RUNNING LLM RESPONSIVENESS AND TTFT BENCHMARK")
         print("======================================================================")
 
-        api_key = os.getenv("API_KEY") or os.getenv("GOOGLE_API_KEY")
-        is_real = api_key is not None
+        is_real = bool(provider and api_key)
 
         # Build mock context for LLM
         mock_context = """
@@ -500,13 +500,13 @@ class BenchmarkSuite:
                 try:
                     # 1. Benchmark regular chat
                     t0 = time.perf_counter()
-                    _ = self.llm.chat(context=mock_context, history=history, message=user_message)
+                    _ = self.llm.chat(context=mock_context, history=history, message=user_message, provider=provider, api_key=api_key)
                     chat_latencies.append((time.perf_counter() - t0) * 1000.0)
 
                     # 2. Benchmark streaming & Time-to-First-Token (TTFT)
                     t0 = time.perf_counter()
                     ttft = None
-                    for chunk in self.llm.chat_stream(context=mock_context, history=history, message=user_message):
+                    for chunk in self.llm.chat_stream(context=mock_context, history=history, message=user_message, provider=provider, api_key=api_key):
                         if ttft is None:
                             ttft = (time.perf_counter() - t0) * 1000.0
                     total_stream_time = (time.perf_counter() - t0) * 1000.0
@@ -515,8 +515,8 @@ class BenchmarkSuite:
                         stream_ttft_latencies.append(ttft)
                         stream_total_latencies.append(total_stream_time)
 
-                except Exception as e:
-                    print(f"Real LLM call failed, switching to simulation: {e}")
+                except Exception:
+                    print("Real LLM call failed, switching to simulation.")
                     is_real = False
 
             if not is_real:

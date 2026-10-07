@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useApp } from '../context/AppContext'
 import { parseResume } from '../utils/api'
 import styles from './Form.module.css'
+import { DEMO_PROFILE } from '../utils/demoProfile'
 
 const TECH_SKILLS = [
   { key: 'python',           label: 'Python'           },
@@ -71,9 +72,10 @@ const ChevronIcon = ({ dir = 'left' }) => (
   </svg>
 )
 
-export default function Form({ onSubmit, loading }) {
+export default function Form({ onSubmit, loading, initialDemo = false }) {
   const { t, lang } = useApp()
-  const [form,       setForm]       = useState(DEFAULT)
+  const [form,       setForm]       = useState(initialDemo ? { ...DEMO_PROFILE, skills: [...DEMO_PROFILE.skills] } : DEFAULT)
+  const [isDemo, setIsDemo] = useState(initialDemo)
   const [skillInput, setSkillInput] = useState('')
   const [errors,     setErrors]     = useState({})
   const [tipIdx,     setTipIdx]     = useState(0)
@@ -191,7 +193,7 @@ export default function Form({ onSubmit, loading }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (!validate()) return
-    onSubmit({ ...form, gpa: Number(form.gpa), lang })
+    onSubmit({ ...form, gpa: Number(form.gpa), lang }, isDemo)
   }
 
   const parseResumeText = (text) => {
@@ -281,10 +283,15 @@ export default function Form({ onSubmit, loading }) {
 
   const techChecked  = TECH_SKILLS.filter(s => form[s.key] === 1).length
   const softAvg      = SOFT_KEYS.reduce((a, k) => a + form[k], 0) / SOFT_KEYS.length
-  const hasSkills    = form.skills.length > 0
   const hasGpa       = form.gpa !== '' && Number(form.gpa) >= 2 && Number(form.gpa) <= 4
-  const completedSteps = [hasSkills, hasGpa, techChecked > 0, true].filter(Boolean).length
-  const progress     = Math.round((completedSteps / 4) * 100)
+
+  const useDemo = () => {
+    setForm({ ...DEMO_PROFILE, skills: [...DEMO_PROFILE.skills] })
+    setIsDemo(true)
+    setErrors({})
+    setSkillInput('')
+    clearParsedResume()
+  }
 
   const layoutClass = [
     styles.pageLayout,
@@ -322,25 +329,8 @@ export default function Form({ onSubmit, loading }) {
 
           <div className={styles.sidebarSection}>
             <div className={styles.sidebarLabel}>{t.form.sidebar.progress}</div>
-            <div className={styles.progressWrap}>
-              <div className={styles.progressBar}>
-                <div className={styles.progressFill} style={{ width: `${progress}%` }}/>
-              </div>
-              <span className={styles.progressPct}>{progress}%</span>
-            </div>
-            <div className={styles.progressSteps}>
-              {[
-                { label: t.form.sidebar.steps.customSkills, done: hasSkills       },
-                { label: t.form.sidebar.steps.gpa,          done: hasGpa          },
-                { label: t.form.sidebar.steps.tech,         done: techChecked > 0 },
-                { label: t.form.sidebar.steps.soft,         done: true            },
-              ].map(({ label, done }) => (
-                <div key={label} className={`${styles.progressStep} ${done ? styles.progressStepDone : ''}`}>
-                  <span className={styles.progressDot}>{done ? '✓' : '○'}</span>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
+            <p className={styles.readiness}>{hasGpa ? t.review.ready : t.review.required}</p>
+            <p className={styles.hint}>{t.review.progressHint}</p>
           </div>
 
           <div className={styles.sidebarSection}>
@@ -385,9 +375,19 @@ export default function Form({ onSubmit, loading }) {
           <div className={styles.header}>
             <h1 className={styles.title}>{t.form.title}</h1>
             <p className={styles.subtitle}>{t.form.subtitle}</p>
+            <p className={styles.requirementNote}>{t.review.required}<br />{t.review.optional}</p>
+            <div className={styles.demoActions}>
+              <button type="button" className={styles.demoButton} disabled={loading} onClick={useDemo}>{t.review.demo}</button>
+              {isDemo && <button type="button" className={styles.resetButton} disabled={loading} onClick={() => { setForm(DEFAULT); setIsDemo(false); setErrors({}); clearParsedResume() }}>{t.review.reset}</button>}
+            </div>
+            {isDemo && <div className={styles.demoNotice} role="status">
+              <strong>{t.review.demoLabel}</strong><p>{t.review.demoHint}</p>
+              {t.review.demoSharedWarning && <p className={styles.requirementNote} style={{ marginTop: 6, color: 'var(--amber-11, #b45309)' }}>{t.review.demoSharedWarning}</p>}
+              <button type="submit" form="career-profile" className={styles.demoButton} disabled={loading}>{loading ? t.form.submitting : t.form.submit} →</button>
+            </div>}
           </div>
 
-          <form className={styles.form} onSubmit={handleSubmit}>
+          <form id="career-profile" className={styles.form} onSubmit={handleSubmit}>
 
             {/* ── CV / Resume parser ── */}
             <div className={styles.section}>
@@ -442,7 +442,7 @@ export default function Form({ onSubmit, loading }) {
             {/* ── Custom Skills with Autocomplete ── */}
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{t.form.skills.label}</div>
-              <p className={styles.hint}>{t.form.skills.hint}</p>
+              <p className={styles.hint}>{t.review.skillsHint}</p>
               <div className={styles.tagsInputWrap} ref={acRef}>
                 <div
                   className={`${styles.tagsInput} ${errors.skills ? styles.error : ''}`}
@@ -451,11 +451,12 @@ export default function Form({ onSubmit, loading }) {
                   {form.skills.map(s => (
                     <span key={s} className={styles.tag}>
                       {s}
-                      <button type="button" className={styles.tagX} onClick={() => removeSkill(s)}>×</button>
+                      <button type="button" className={styles.tagX} onClick={() => removeSkill(s)} aria-label={`${t.review.removeSkill}: ${s}`}>×</button>
                     </span>
                   ))}
                   <input
                     ref={inputRef}
+                    aria-label={t.form.skills.label}
                     className={styles.tagsInner}
                     value={skillInput}
                     onChange={handleSkillInput}
@@ -509,19 +510,19 @@ export default function Form({ onSubmit, loading }) {
               <div className={styles.sectionLabel}>{t.form.personal.label}</div>
               <div className={styles.grid2}>
                 <div className={styles.field}>
-                  <label className={styles.label}>{t.form.personal.gpa}</label>
+                  <label className={styles.label} htmlFor="profile-gpa">{t.review.required}</label>
                   <input
                     className={`${styles.input} ${errors.gpa ? styles.error : ''}`}
-                    type="number" min="2" max="4" step="0.1"
+                    id="profile-gpa" required type="number" min="2" max="4" step="0.1"
                     value={form.gpa} placeholder="3.5"
                     onChange={e => set('gpa', e.target.value)}
                   />
                   {errors.gpa && <span className={styles.errorMsg}>{errors.gpa}</span>}
                 </div>
                 <div className={styles.field}>
-                  <label className={styles.label}>{t.form.personal.field}</label>
+                  <label className={styles.label} htmlFor="profile-field">{t.form.personal.field}</label>
                   <select
-                    className={styles.select}
+                    id="profile-field" className={styles.select}
                     value={form.field_of_study}
                     onChange={e => set('field_of_study', e.target.value)}
                   >
@@ -534,7 +535,7 @@ export default function Form({ onSubmit, loading }) {
             {/* ── Technical Skills ── */}
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{t.form.technical.label}</div>
-              <p className={styles.hint}>{t.form.technical.hint}</p>
+              <p className={styles.hint}>{t.review.technicalHint}</p>
               <div className={styles.checkGrid}>
                 {TECH_SKILLS.map(({ key, label }) => (
                   <label key={key} className={styles.checkItem}>
@@ -553,7 +554,7 @@ export default function Form({ onSubmit, loading }) {
             {/* ── Soft Skills ── */}
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{t.form.soft.label}</div>
-              <p className={styles.hint}>{t.form.soft.hint}</p>
+              <p className={styles.hint}>{t.review.softHint}</p>
               <div className={styles.softGrid}>
                 {SOFT_KEYS.map(key => (
                   <div key={key} className={styles.softItem}>
@@ -564,6 +565,8 @@ export default function Form({ onSubmit, loading }) {
                           key={n} type="button"
                           className={`${styles.star} ${form[key] >= n ? styles.starOn : ''}`}
                           onClick={() => set(key, n)}
+                          aria-label={`${t.form.soft[key]}: ${n} / 5`}
+                          aria-pressed={form[key] === n}
                         >●</button>
                       ))}
                     </div>

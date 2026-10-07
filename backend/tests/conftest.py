@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main as app_main
+import database
 
 
 EXPECTED_PROFESSIONS = {
@@ -40,6 +41,9 @@ TEST_PROFILE = {
 
 
 class DummySkillMatcher:
+    def get_user_skills_ranked(self, skills):
+        return [{"skill": skill, "canonical_skill": skill.lower(), "tfidf_weight": 0.0, "status": "verified"} for skill in skills]
+
     def get_scores(self, skills):
         has_ml = any(skill.lower() in {"pytorch", "tensorflow", "machine learning"} for skill in skills)
         return {
@@ -152,13 +156,10 @@ class DummyLLM:
     ):
         return f"Context for skills: {', '.join(skills)}"
 
-    def chat(self, context, history, message):
+    def chat(self, context, history, message, *, provider, api_key):
         return f"Mock advisor response: {message}"
 
-    def ensure_configured(self):
-        return None
-
-    def chat_stream(self, context, history, message, deep=False):
+    def chat_stream(self, context, history, message, deep=False, *, provider, api_key):
         yield "Mock streamed advisor response"
 
 
@@ -175,7 +176,13 @@ def mocked_services(monkeypatch):
 
 
 @pytest.fixture
-def client(mocked_services):
+def isolated_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "career-test.sqlite3")
+    database.init_db()
+
+
+@pytest.fixture
+def client(mocked_services, isolated_db):
     with TestClient(app_main.app) as test_client:
         yield test_client
 

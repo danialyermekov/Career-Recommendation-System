@@ -1,15 +1,159 @@
 import json
-from google import genai
-from google.genai import types
-import os
-from dotenv import load_dotenv
-import time
-
-load_dotenv()
+import logging
+from collections.abc import Iterator
 
 
-class LLMNotConfiguredError(RuntimeError):
-    """Raised when chat endpoints are used without an API key."""
+class LLMError(RuntimeError):
+    """A public, credential-free error safe for HTTP and SSE responses."""
+
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+
+
+def safe_llm_error(error: Exception) -> LLMError:
+    if isinstance(error, LLMError):
+        return error
+    status = getattr(error, "status_code", None) or getattr(error, "code", None)
+    details = getattr(error, "details", None)
+    reasons = details.get("error", {}).get("details", []) if isinstance(details, dict) else []
+    key_rejected = any(isinstance(item, dict) and item.get("reason") == "API_KEY_INVALID" for item in reasons)
+    if status in (401, 403) or key_rejected:
+        return LLMError(401, "key_rejected", "API key rejected by provider. Check the key and its permissions.")
+    if status == 400:
+        return LLMError(400, "provider_request_rejected", "Provider rejected the request. Check your API key and conversation.")
+    if status == 429:
+        return LLMError(429, "rate_limited", "Rate limit reached. Check your provider quota or try again later.")
+    return LLMError(503, "provider_unavailable", "Provider temporarily unavailable. Please try again later.")
+
+
+class GeminiProvider:
+    @staticmethod
+    def _client(api_key):
+        from google import genai
+        from google.genai import types
+
+        # SDK debug output can include provider response metadata.
+        logging.getLogger("google_genai._api_client").setLevel(logging.WARNING)
+        return genai.Client(
+            api_key=api_key,
+            vertexai=False,
+            http_options=types.HttpOptions(
+                base_url="https://generativelanguage.googleapis.com", timeout=60000,
+            ),
+        )
+
+    @staticmethod
+    def _contents(history, message):
+        from google.genai import types
+
+        return [
+            types.Content(
+                role="model" if item["role"] == "assistant" else "user",
+                parts=[types.Part(text=item["content"])],
+            )
+            for item in history
+        ] + [types.Content(role="user", parts=[types.Part(text=message)])]
+
+    def chat(self, api_key: str, system: str, history: list[dict[str, str]], message: str) -> str:
+        from google.genai import types
+
+        with self._client(api_key) as client:
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-lite-preview",
+                contents=self._contents(history, message),
+                config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=1000),
+            )
+            return response.text or ""
+
+    def chat_stream(self, api_key: str, system: str, history: list[dict[str, str]], message: str, deep: bool) -> Iterator[dict[str, str]]:
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=8192 if deep else 2000,
+            thinking_config=types.ThinkingConfig(include_thoughts=True) if deep else None,
+        )
+        with self._client(api_key) as client:
+            for chunk in client.models.generate_content_stream(
+                model="gemini-2.5-pro" if deep else "gemini-2.5-flash-lite",
+                contents=self._contents(history, message), config=config,
+            ):
+                if not chunk.candidates or not chunk.candidates[0].content:
+                    continue
+                for part in chunk.candidates[0].content.parts or []:
+                    if part.text:
+                        yield {"type": "thought" if part.thought else "text", "content": part.text}
+
+    def transcribe_audio(self, api_key: str, audio: bytes, mime_type: str, lang: str) -> str:
+        from google.genai import types
+
+        prompts = {
+            "ru": "Расшифруй голосовое сообщение на русском. Верни только распознанный текст без пояснений. Если это тишина, шум, музыка, тон или нет человеческой речи, верни пустую строку.",
+            "kk": "Қазақ тіліндегі дауыстық хабарламаны мәтінге айналдыр. Тек танылған мәтінді қайтар, түсіндірме қоспа. Егер бұл тыныштық, шу, музыка, дыбыс тоны немесе адам сөзі болмаса, бос жол қайтар.",
+            "en": "Transcribe this voice message. Return only the recognized text with no explanation. If this is silence, noise, music, a tone, or not human speech, return an empty string.",
+        }
+        with self._client(api_key) as client:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents=[types.Content(role="user", parts=[
+                    types.Part.from_text(text=prompts.get(lang, prompts["en"])),
+                    types.Part.from_bytes(data=audio, mime_type=mime_type or "audio/wav"),
+                ])],
+                config=types.GenerateContentConfig(max_output_tokens=256),
+            )
+            return (response.text or "").strip().strip('"').strip()
+
+
+class ClaudeProvider:
+    @staticmethod
+    def _client(api_key):
+        from anthropic import Anthropic
+
+        # ANTHROPIC_LOG=debug must not expose request options or exception metadata.
+        logging.getLogger("anthropic._base_client").setLevel(logging.WARNING)
+        return Anthropic(api_key=api_key, base_url="https://api.anthropic.com", timeout=60.0)
+
+    def chat(self, api_key: str, system: str, history: list[dict[str, str]], message: str) -> str:
+        with self._client(api_key) as client:
+            response = client.messages.create(
+                model="claude-sonnet-5-5", system=system, max_tokens=1000,
+                messages=history + [{"role": "user", "content": message}],
+                thinking={"type": "between_tools"},
+            )
+            return "".join(part.text for part in response.content if part.type == "text")
+
+    def chat_stream(self, api_key: str, system: str, history: list[dict[str, str]], message: str, deep: bool) -> Iterator[dict[str, str]]:
+        with self._client(api_key) as client:
+            with client.messages.stream(
+                model="claude-sonnet-5-5", system=system, max_tokens=8192 if deep else 2000,
+                messages=history + [{"role": "user", "content": message}],
+                thinking={"type": "adaptive", "display": "summarized"} if deep else {"type": "between_tools"},
+            ) as stream:
+                for event in stream:
+                    if event.type == "content_block_delta":
+                        if event.delta.type == "text_delta":
+                            yield {"type": "text", "content": event.delta.text}
+                        elif event.delta.type == "thinking_delta":
+                            yield {"type": "thought", "content": event.delta.thinking}
+
+    def transcribe_audio(self, api_key: str, audio: bytes, mime_type: str, lang: str) -> str:
+        raise LLMError(400, "voice_unsupported", "Voice transcription is only available with Gemini.")
+
+
+PROVIDERS = {"anthropic": ClaudeProvider, "gemini": GeminiProvider}
+
+
+def validate_credentials(provider: str, api_key: str) -> tuple[str, str]:
+    api_key = api_key.strip()
+    if not api_key:
+        raise LLMError(400, "key_missing", "API key missing. Add your Claude or Gemini API key to enable the AI assistant.")
+    if provider not in PROVIDERS:
+        raise LLMError(400, "unsupported_provider", "Unsupported LLM provider. Select Claude or Gemini.")
+    if len(api_key) > 4096 or any(not 33 <= ord(char) <= 126 for char in api_key):
+        raise LLMError(400, "key_invalid", "Invalid API key format.")
+    return provider, api_key
 
 PROFESSION_DESCRIPTIONS = {
     'Data Scientist':            'Builds predictive models and extracts insights from data using statistics and machine learning.',
@@ -22,10 +166,8 @@ PROFESSION_DESCRIPTIONS = {
 }
 
 class LLMService:
-    '''Service for interacting with the LLM (Gemini) to provide personalized career advice based on the student's profile and other context.'''
+    """Credential-free context builder and provider dispatcher. Clients live only within a request."""
     def __init__(self):
-        api_key = os.getenv("API_KEY") or os.getenv("GOOGLE_API_KEY")
-        self.client = genai.Client(api_key=api_key) if api_key else None
         self.system_prompt = """
 You are an expert IT career advisor helping a student choose their career path.
 
@@ -41,27 +183,6 @@ Rules:
 - If the user writes in Russian — respond in Russian, location is Kazakhstan (take it into account). Default is English, location is global.
 """
 
-    def ensure_configured(self):
-        if self.client is None:
-            raise LLMNotConfiguredError(
-                "LLM is not configured. Set API_KEY or GOOGLE_API_KEY to enable /chat endpoints."
-            )
-
-    def _build_gemini_history(self, history: list) -> list:
-        '''Convert our internal message history format to the format expected by Gemini.'''
-        gemini_history = []
-        for msg in history:
-            if not isinstance(msg, dict):
-                continue
-            role = "model" if msg.get("role") == "assistant" else "user"
-            gemini_history.append(
-                types.Content(
-                    role=role,
-                    parts=[types.Part(text=msg.get("content", ""))]
-                )
-            )
-        return gemini_history
-    
     def build_context(
         self,
         skills: list[str],
@@ -97,123 +218,34 @@ Rules:
 ## Personalized Roadmap and Courses
 {json.dumps(roadmap_with_courses, indent=2, ensure_ascii=False)}
 """
-    def list_models(self):
-        self.ensure_configured()
-        for m in self.client.models.list():
-            if 'flash' in m.name.lower():
-                print(m.name)
 
-    def transcribe_audio(self, audio: bytes, mime_type: str, lang: str = "en") -> str:
-        """Transcribe a short voice input clip for the chat box."""
-        self.ensure_configured()
-        prompts = {
-            "ru": "Расшифруй голосовое сообщение на русском. Верни только распознанный текст без пояснений. Если это тишина, шум, музыка, тон или нет человеческой речи, верни пустую строку.",
-            "kk": "Қазақ тіліндегі дауыстық хабарламаны мәтінге айналдыр. Тек танылған мәтінді қайтар, түсіндірме қоспа. Егер бұл тыныштық, шу, музыка, дыбыс тоны немесе адам сөзі болмаса, бос жол қайтар.",
-            "en": "Transcribe this voice message. Return only the recognized text with no explanation. If this is silence, noise, music, a tone, or not human speech, return an empty string.",
-        }
-        response = self.client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_text(text=prompts.get(lang, prompts["en"])),
-                        types.Part.from_bytes(data=audio, mime_type=mime_type or "audio/wav"),
-                    ],
-                )
-            ],
-            config=types.GenerateContentConfig(max_output_tokens=256),
-        )
-        text = (response.text or "").strip()
-        return text.strip('"').strip()
-
-    def chat(self, context: str, history: list, message: str) -> str:
-        '''Generate a response from the LLM based on the provided context, conversation history, and user message.'''
-        self.ensure_configured()
-        gemini_history = []
-        for msg in history:
-            if not isinstance(msg, dict):
-                continue
-            role = "model" if msg["role"] == "assistant" else "user"
-            gemini_history.append(
-                types.Content(role=role, parts=[types.Part(text=msg["content"])])
+    def chat(self, context: str, history: list[dict], message: str, *, provider: str, api_key: str) -> str:
+        provider, api_key = validate_credentials(provider, api_key)
+        try:
+            return PROVIDERS[provider]().chat(
+                api_key, self.system_prompt, history, f"Context:\n{context}\n\nQuestion: {message}",
             )
+        except Exception as error:
+            raise safe_llm_error(error) from None
 
-        full_message = f"Context:\n{context}\n\nQuestion: {message}"
+    def chat_stream(
+        self, context: str, history: list[dict], message: str, deep: bool = False,
+        *, provider: str, api_key: str,
+    ) -> Iterator[str]:
+        provider, api_key = validate_credentials(provider, api_key)
+        try:
+            for chunk in PROVIDERS[provider]().chat_stream(
+                api_key, self.system_prompt, history, f"Context:\n{context}\n\nQuestion: {message}", deep,
+            ):
+                yield json.dumps(chunk)
+        except Exception as error:
+            raise safe_llm_error(error) from None
 
-        for attempt in range(3):
-            try:
-                response = self.client.models.generate_content(
-                    model="gemini-3.1-flash-lite-preview",
-                    contents=gemini_history + [
-                        types.Content(role="user", parts=[types.Part(text=full_message)])
-                    ],
-                    config=types.GenerateContentConfig(
-                        system_instruction=self.system_prompt,
-                        max_output_tokens=1000,
-                    )
-                )
-                return response.text
-            except Exception as e:
-                if "503" in str(e) or "UNAVAILABLE" in str(e):
-                    if attempt < 2:
-                        time.sleep(2 ** attempt) 
-                    continue
-                raise
-        return "Sorry, I'm having trouble generating a response right now. Please try again later."
-    
-    def chat_stream(self, context: str, history: list, message: str, deep: bool = False):
-        '''Generate a streaming response from the LLM, yielding chunks of text as they are generated. If `deep` is True, include the model's thoughts in the stream.'''
-        self.ensure_configured()
-        model = "gemini-2.5-pro" if deep else "gemini-2.5-flash-lite" 
-        
-        full_message = f"Context:\n{context}\n\nQuestion: {message}"
-        contents = self._build_gemini_history(history) + [
-            types.Content(role="user", parts=[types.Part(text=full_message)])
-        ]
-
-        config_kwargs = {
-            "system_instruction": self.system_prompt,
-            "max_output_tokens": 8192 if deep else 2000, 
-        }
-        
-        if deep:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(include_thoughts=True)
-
-        config = types.GenerateContentConfig(**config_kwargs)
-
-        for attempt in range(3):
-            try:
-                response = self.client.models.generate_content_stream(
-                    model=model,  
-                    contents=contents,
-                    config=config,
-                )
-                
-                for chunk in response:
-                    if not chunk.candidates:
-                        continue
-                        
-                    for part in chunk.candidates[0].content.parts:
-                        is_thought = getattr(part, 'thought', False)
-                        
-                        if part.text:
-                            data = {
-                                "type": "thought" if is_thought else "text",
-                                "content": part.text
-                            }
-                            yield json.dumps(data)
-                            
-                yield "[DONE]"
-                return
-            
-            except Exception as e:
-                error_msg = str(e).upper()
-                if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg:
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
-                        continue
-                raise
-                
-        error_data = {"type": "text", "content": "Service is currently unavailable. Please try again later."}
-        yield json.dumps(error_data)
+    def transcribe_audio(
+        self, audio: bytes, mime_type: str, lang: str = "en", *, provider: str, api_key: str,
+    ) -> str:
+        provider, api_key = validate_credentials(provider, api_key)
+        try:
+            return PROVIDERS[provider]().transcribe_audio(api_key, audio, mime_type, lang)
+        except Exception as error:
+            raise safe_llm_error(error) from None

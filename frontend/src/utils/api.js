@@ -1,9 +1,19 @@
+import { getLLMHeaders } from './llmSettings'
+
+async function checkAIResponse(res) {
+  if (res.ok) return
+  let code = 'provider_unavailable'
+  try { code = (await res.json()).detail?.code || code } catch {}
+  // Show localized, known errors in the UI, never arbitrary response bodies.
+  throw Object.assign(new Error('AI request failed.'), { code })
+}
+
 function getBaseUrl() {
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL
   }
 
-  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+  if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
     if (window.location.port !== '8000' && window.location.port !== '') {
       return 'http://localhost:8000'
     }
@@ -27,44 +37,42 @@ export async function getRecommendation(profile) {
 export async function sendChat(sessionId, history, message) {
   const res = await fetch(`${BASE}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...getLLMHeaders() },
     body: JSON.stringify({
       session_id: sessionId,
       message,
       history: history.map(m => ({ role: m.role, content: m.content })),
     }),
   })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  await checkAIResponse(res)
   return res.json()
 }
 
 export async function sendChatStream(payload, signal) {
   const res = await fetch(`${BASE}/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json', ...getLLMHeaders() },
+    body: JSON.stringify({
+      session_id: payload.session_id, message: payload.message, deep: payload.deep, lang: payload.lang,
+      history: payload.history.map(m => ({ role: m.role, content: m.content })),
+    }),
     signal,
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `API error: ${res.status}`);
-  }
+  await checkAIResponse(res)
 
   return res;
 }
 
-export async function transcribeVoice(audioBlob, lang) {
+export async function transcribeVoice(audioBlob, lang, signal) {
   const res = await fetch(`${BASE}/voice/transcribe?lang=${encodeURIComponent(lang || 'en')}`, {
     method: 'POST',
-    headers: { 'Content-Type': audioBlob.type || 'audio/wav' },
+    headers: { 'Content-Type': audioBlob.type || 'audio/wav', ...getLLMHeaders() },
     body: audioBlob,
+    signal,
   })
 
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(text || `API error: ${res.status}`)
-  }
+  await checkAIResponse(res)
 
   return res.json()
 }

@@ -1,6 +1,6 @@
-# Career Recommendation System
+# CareerFlow
 
-Full-stack AI career guidance system for students. The application recommends IT career tracks, compares all supported professions, explains recommendation factors down to individual skills, builds a personalized learning roadmap with filtered course recommendations, stores user progress in SQLite, parses resumes, exports a PDF report, and includes an optional AI advisor.
+Career guidance for IT students choosing a direction, with an optional AI advisor. The application ranks supported IT careers using profile classification, skill similarity and historical market signals, explains the ranking, and builds a rule-based learning roadmap with courses. Public product URL: https://careerflow.live.
 
 ## Authors
 
@@ -23,7 +23,7 @@ The system helps students choose an IT career direction by combining:
 - advanced course filtering by certificate, price, language, platform, and level;
 - skill-level explainability with SHAP or fallback feature-importance logic;
 - persistent recommendation history and roadmap progress in SQLite;
-- optional Gemini-powered AI advisor chat.
+- optional Claude or Gemini AI advisor chat with a user-provided session key.
 
 The app does not only return a single top profession. It shows all supported career tracks and lets the student compare scores, skill gaps, market signals, and roadmap requirements.
 
@@ -45,11 +45,36 @@ The final recommendation score combines four signals:
 
 ```text
 Final score =
-  0.40 * classifier/profile score
-+ 0.40 * skill-match score
-+ 0.15 * demand-trend score
-+ 0.05 * demand market-share score
+  0.38 * normalized classifier/profile score
++ 0.35 * normalized skill-match score
++ 0.20 * normalized demand-trend score
++ 0.07 * normalized demand market-share score
 ```
+
+These weights come from `backend/config.py`. In `backend/top_profession.py`, classifier values are divided by their sum; the other three signals are separately divided by their largest value across the scored careers. A zero denominator uses 1. The weighted sum is rounded to four decimal places, without a final normalization across careers. The frontend displays it as a match score out of 100, not a probability of career success. The breakdown uses these same normalized values; expandable details also show the raw API values.
+
+Normalized user skills are sorted before vectorization because the saved TF-IDF vectorizer includes bigrams. This prevents Python set iteration order from changing scores between worker processes; the vectorizer and profession vectors are unchanged.
+
+### Data and reviewer workflow
+
+Use **Use demo profile** on the landing page or profile form to load an editable Computer Science student with GPA 3.2, Python/SQL/Pandas/Git/Excel and moderate self-ratings. Submit it through the normal recommendation API. Demo labels are browser-tab metadata; no history is fabricated. GPA is the only field the form requires users to enter; other API fields are populated with visible defaults.
+
+Dataset provenance (source pages supplied by the project owner; upstream metadata checked on 2026-10-07):
+
+| Source | Local use and derived artifacts | Upstream declared license |
+|---|---|---|
+| Luke Barousse’s [Data Jobs on Hugging Face](https://huggingface.co/datasets/lukebarousse/data_jobs) | Historical 2023 job postings. Demand and skill notebooks read `data/raw/data_jobs_norm.csv`; demand aggregation produces `ml/demand prediction/data/aggregated/weekly_vacancy_counts.csv`, identical to `backend/data/vacancy_data.csv`. Skill notebooks derive the TF-IDF vectorizer and profession vectors/profiles used for skill matching and roadmaps. | Apache 2.0 (`apache-2.0`), verified in the [upstream dataset card](https://huggingface.co/datasets/lukebarousse/data_jobs/raw/main/README.md). |
+| hafsaatm’s [Career Path Recommendation on Kaggle](https://www.kaggle.com/datasets/hafsaatm/career-path-recommendation) | Synthetic profiles in `ml/classification/data/raw/career_multilabel_dataset.csv`, followed by local balancing, feature engineering and classifier training. The file has education/background fields, technical indicators, soft skills and three recommended-job labels; the current classifier targets `recommended_job_1`. | The [Kaggle metadata endpoint](https://www.kaggle.com/api/v1/datasets/view/hafsaatm/career-path-recommendation) reports `licenseName: "Unknown"`. License terms remain unverified; clarify them before broader reuse. |
+
+The upstream Hugging Face card describes postings collected through Google from multiple sources; this project does not claim direct or complete coverage of LinkedIn, Glassdoor or any other platform. The Kaggle description explicitly identifies its profiles as synthetic educational/research data, not observed career outcomes. Upstream download revisions and checksums were not recorded, and the intermediate `data_jobs_norm.csv` files referenced by the notebooks are not checked in, so exact reproduction of the original imports remains unverified. These dataset declarations do not assign a license to CareerFlow itself.
+
+The checked-in demand file `backend/data/vacancy_data.csv` contains 371 weekly career observations dated 2023-01-01 through 2023-12-31. The service maps the current calendar date to a 2023 week; these estimates are historical and do not represent live job availability. Trend is predicted volume divided by each career's historical weekly peak; market share is predicted volume divided by the total for the supported tracks, before ranking normalization.
+
+The raw profile file contains 2,000 rows. The training preparation adds synthetic examples for missing Data Analyst and Data Engineer classes. The serving preprocessor uses study field, GPA, technical indicators, soft-skill ratings and derived features; it does not use age or gender. Synthetic-label classification is exploratory guidance and does not establish real career outcomes.
+
+The course catalog contains 41,690 rows in `backend/data/all_courses.csv`, not a verified count of distinct, currently available courses. Price, availability and rating freshness are unverified. The public hero does not advertise this count. The roadmap uses normalized skill gaps, category limits and framework/language compatibility rules; progress counts user-marked learning steps.
+
+Navigation uses URL hashes (`#profile`, `#results/<session_id>`) without adding a router. A saved result can reload through the existing state API. Recommendation history is currently shared by the single anonymous `demo` account; the UI labels it accordingly and differentiates runs by timestamp, skill count and identifier. Private history, authentication, access control and dataset licensing need a separate review before broader production use.
 
 Backend services:
 
@@ -57,7 +82,7 @@ Backend services:
 - `SkillMatcherService`: TF-IDF profession vectors and cosine similarity.
 - `DemandService`: LightGBM-based demand and vacancy trend scoring.
 - `CourseFinderService`: roadmap course lookup from the course catalog.
-- `LLMService`: optional Gemini chat, streaming, and voice transcription.
+- `LLMService`: optional Claude/Gemini chat and streaming; Gemini voice transcription.
 
 ### Course Filtering
 
@@ -159,7 +184,7 @@ Roadmap features:
 
 ### AI Advisor
 
-The AI advisor is optional and uses Gemini when `API_KEY` is provided.
+The AI advisor is optional. Open the AI assistant panel, select Claude / Anthropic (listed first) or Gemini / Google, enter your API key, and choose **Use key**. Use **Remove key** to disable AI immediately. No API key is required to start CareerFlow or use its recommendations, ML models, roadmap, resume parser, demand prediction, history, or progress.
 
 Features:
 
@@ -171,7 +196,15 @@ Features:
 - prompt-injection and off-topic guardrails;
 - compact translucent floating button that does not block course browsing.
 
-Without `API_KEY`, the recommendation pipeline still works, but chat endpoints return a configuration error.
+The password input is cleared after selecting **Use key**; the UI shows only the provider and a masked enabled state. Credentials live only in frontend module memory for the lifetime of the loaded React application. Client-side navigation keeps them available; a full refresh, reopening the page, or opening another tab starts without a key. **Remove key** clears them immediately. Credentials are never written to localStorage, sessionStorage, IndexedDB, cookies, chat messages, or recommendation/progress history. Loading this version removes the legacy `careerflow-llm-session` browser-storage entry without reading or restoring it.
+
+Only `/chat`, `/chat/stream`, and `/voice/transcribe` receive `X-LLM-Provider` (`anthropic` or `gemini`) and `X-LLM-API-Key` headers. They are never URL/query/body fields. FastAPI validates headers without echoing their values, then passes them to the LLM service for that request. A small provider registry dispatches to per-call SDK clients, closed after completion; no credential-bearing backend singleton, session, cache, file, or database record is created. Environment keys (`API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) are not application fallbacks.
+
+The normal generation request checks the key; selecting **Use key** makes no provider call. Missing keys return HTTP 400, rejected credentials HTTP 401, rate limits HTTP 429, and unavailable providers HTTP 503. After an SSE stream starts, failures are safe JSON `type: "error"` events followed by one `[DONE]`. Invalid keys remain only in memory for the user to correct or remove. Removing/changing credentials aborts in-flight frontend AI requests.
+
+Claude uses Anthropic Messages with `claude-sonnet-5-5`; deep mode uses adaptive thinking. Gemini retains the existing `google-genai` chat models and thought/text stream format. Audio transcription remains Gemini-only; Claude users can type or use browser speech playback. To add a provider, implement the same three provider methods, register it in `backend/services/llm.py`, and add its public metadata to `frontend/src/utils/llmSettings.js`.
+
+Security limits: in-memory credentials do **not** protect against XSS or malicious browser extensions. Use HTTPS outside localhost. The key necessarily passes through CareerFlow's backend and the selected provider; provider-side processing and retention follow that provider's policies. Application code does not log credentials or raw provider exceptions, and suppresses SDK request/exception debug logging. Keep reverse proxies, APM, analytics, and transport debug logging from recording `X-LLM-API-Key`, `x-api-key`, or `x-goog-api-key`. CORS already permits the custom headers; it is not authentication. Authentication and rate limiting for a public deployment remain separate work.
 
 ### Resume / CV Parser
 
@@ -214,7 +247,7 @@ FastAPI backend
         |-- Course finder -> filtered course metadata from all_courses.csv
         |-- SQLite database -> history, scores, gaps, roadmap progress, filter preferences
         |-- PyMuPDF parser -> resume skills and role extraction
-        |-- Gemini LLM service -> optional AI advisor
+        |-- Claude / Gemini LLM service -> optional AI advisor
         |
         v
 React frontend
@@ -237,7 +270,7 @@ React frontend
 | ML | CatBoost, LightGBM, scikit-learn, pandas, NumPy, joblib |
 | Resume parsing | PyMuPDF |
 | Frontend | React, Framer Motion, CSS Modules |
-| AI advisor | Google Gemini via `google-genai` |
+| AI advisor | Anthropic Claude via `anthropic`; Google Gemini via `google-genai` |
 | Testing | Pytest, React Scripts/Jest |
 | Deployment | Docker, Docker Compose |
 
@@ -255,7 +288,7 @@ Career-Recommendation-System/
 │   │   ├── classifier.py                # CatBoost scoring and SHAP/fallback explainability
 │   │   ├── course_finder.py             # Course metadata and roadmap course lookup
 │   │   ├── demand.py                    # Demand scoring
-│   │   ├── llm.py                       # Gemini chat and voice transcription
+│   │   ├── llm.py                       # Claude/Gemini chat; Gemini voice transcription
 │   │   ├── resume_parser.py             # Resume parser
 │   │   └── skill_matcher.py             # Skill matching
 │   ├── tests/                           # Backend tests
@@ -282,63 +315,55 @@ Career-Recommendation-System/
 
 ## Quick Start With Docker
 
-Docker is the recommended way to run the whole app because the ML dependencies are heavy.
+Docker is the recommended way to run the whole app because the ML dependencies are heavy and pre-compiled in a two-stage reproducible build.
 
-From the project root:
+### Production Container Build & Run
+
+1. Build the production image:
+
+```bash
+docker build -t careerflow:local .
+```
+
+2. Run the single container (example using local port `18002` or `8000`):
+
+```bash
+docker run --rm --name careerflow-local -p 18002:8000 careerflow:local
+```
+
+3. Access the endpoints:
+- Application UI: [http://localhost:18002/](http://localhost:18002/)
+- Healthcheck: [http://localhost:18002/health](http://localhost:18002/health)
+- API documentation: [http://localhost:18002/docs](http://localhost:18002/docs)
+
+4. Stop the container:
+
+```bash
+docker stop careerflow-local
+```
+
+### Quick Start With Docker Compose
+
+Alternatively, use Docker Compose to run on port `8000`:
 
 ```bash
 docker compose up --build
 ```
 
-Open the app:
-
-```text
-http://localhost:8000
-```
-
-Open API docs:
-
-```text
-http://localhost:8000/docs
-```
-
-Optional Gemini AI advisor:
-
-```bash
-API_KEY=your_google_gemini_api_key docker compose up --build
-```
-
-Windows PowerShell:
-
-```powershell
-$env:API_KEY="your_google_gemini_api_key"
-docker compose up --build
-```
-
-Or create a root `.env` file:
-
-```env
-API_KEY=your_google_gemini_api_key
-```
-
-Then run:
-
-```bash
-docker compose up --build
-```
-
-Stop containers:
+Access the app at [http://localhost:8000](http://localhost:8000) and API docs at [http://localhost:8000/docs](http://localhost:8000/docs). Stop containers with:
 
 ```bash
 docker compose down
 ```
 
-If the build fails with `IncompleteRead` during `pip install`, retry the build. The Dockerfile uses pip retries and longer timeouts, but large ML wheels can still fail on unstable network connections:
+### Architecture and Runtime Notes
 
-```bash
-docker compose build --no-cache
-docker compose up
-```
+- **Single Container, Same-Origin:** The container uses a multi-stage build (`node:22-bookworm-slim` for React and `python:3.12-slim` for FastAPI). In production, `REACT_APP_API_URL` is intentionally empty so all API calls (`/recommend`, `/chat`, `/recommendation/...`) are made to the same origin without CORS overhead.
+- **Reproducible Dependency Locking:** Frontend packages are installed strictly via `npm ci` matching `package-lock.json`. Backend dependencies are synchronized via `uv sync --locked --no-dev` using the committed `uv.lock`.
+- **SQLite Container Storage:** SQLite creates `backend/data/career_advisor.sqlite3` on startup. In containerized environments (such as Azure Container Apps without external volume mounts), this storage is ephemeral and instance-local. Data will reset if the container is recreated.
+- **Single Instance / Worker:** Because recommendation chat context is held in instance memory (`session_store`) and SQLite is container-local, the service is currently designed for 1 replica and 1 Uvicorn worker.
+- **Cloud Ingress (Azure Container Apps):** The container listens on internal port `8000` HTTP. In production deployment, external HTTPS termination and TLS certificates are handled by the cloud ingress controller.
+- **BYOK AI Security:** No LLM API keys are baked into the image or read from container environment files. AI credentials remain client-side in the browser session and are transmitted exclusively with AI chat/voice requests over secure headers.
 
 ## Local Development
 
@@ -525,9 +550,10 @@ Backend tests:
 
 ```bash
 cd backend
-pip install -e ".[dev]"
-python -m pytest
+uv run --extra dev pytest tests/test_api.py tests/test_course_finder.py tests/test_llm.py
 ```
+
+The complete suite (`uv run --extra dev pytest`) also includes `test_recommendations.py`, which sends HTTP requests to a running backend at `http://localhost:8000`. Run that server with a disposable database when validating recommendation persistence.
 
 Frontend production build:
 
@@ -552,8 +578,12 @@ Current backend tests cover:
 - roadmap course output;
 - chat context behavior;
 - streaming chat;
+- missing/unsupported credentials, safe HTTP/SSE errors, and CORS preflight;
+- mocked Claude/Gemini SDK integration and credential-free recommendation persistence;
 - language-aware course lookup;
 - resume parser false-positive protection.
+
+Frontend tests cover session-only key storage, saving/removal and masking, the actual assistant's no-key state, SSE errors, and credential headers on AI calls only. No real provider calls are made by these tests.
 
 ## Troubleshooting
 
@@ -613,13 +643,7 @@ Get-NetTCPConnection -LocalPort 8000
 
 ### AI chat does not answer
 
-The AI advisor requires:
-
-```env
-API_KEY=your_google_gemini_api_key
-```
-
-Recommendation generation, course filters, roadmap, and charts work without this key.
+Open the AI assistant panel and save your Claude or Gemini API key for the current tab session. If a provider rejects it, check the key, permissions, and provider quota; the key is kept until you replace or remove it. Server environment keys are ignored. Other features continue to work without a key.
 
 ### SQLite database should be reset
 

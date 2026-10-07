@@ -1,18 +1,60 @@
+# Version control and editor
 .git
 .gitignore
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Secrets and environment configs (must never leak into Docker image)
 .env
 .env.*
-.sixth
-ml
-backend/data/*.sqlite3
+**/.env
+**/.env.*
+
+# Python caches and local virtualenvs
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+**/.pytest_cache
+.uv-cache
+**/.uv-cache
+.venv
+**/.venv
+venv
+**/venv
+*.egg-info
+**/*.egg-info
+
+# Local temporary and log files
+*.log
 backend/dev-server.*.log
-frontend/build
-backend/.venv
+frontend/dev-server.*.log
+
+# Frontend development and build artifacts (must be built fresh inside container)
 frontend/node_modules
 frontend/build
-**/__pycache__
-**/*.pyc
-**/*.pyo
-**/*.pyd
-**/.pytest_cache
-**/.DS_Store
+frontend/coverage
+
+# Backend development scripts, benchmarks and tests (not needed in production runtime)
+backend/tests
+backend/evaluate_speed.py
+backend/optimize_weights.py
+backend/benchmark_report.md
+
+# ML research, experiments, notebooks and data
+ml
+notebooks
+**/*.ipynb
+scripts
+.sixth
+
+# Local databases and duplicate / unused datasets
+backend/data/*.sqlite3
+backend/data/*.sqlite3-journal
+backend/data/*.sqlite3-wal
+backend/data/combined_courses.csv
+backend/data/courses_combined.csv

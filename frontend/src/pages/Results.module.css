@@ -463,7 +463,7 @@
 .professionBarRow {
   position: relative;
   display: grid;
-  grid-template-columns: 34px minmax(120px, 210px) minmax(140px, 1fr) 46px;
+  grid-template-columns: 34px minmax(120px, 210px) minmax(100px, 1fr) 88px;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -1698,6 +1698,7 @@
 }
 .chatSend:hover:not(:disabled) { background: var(--accent-hover); }
 .chatSend:disabled { opacity: .4; cursor: not-allowed; }
+.voiceBtn:disabled, .deepModeBtn:disabled, .chatInputField:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ─── Thought block ──────────────────────────────────────────── */
 .thoughtBlock {
@@ -2121,4 +2122,57 @@
 
 .tooltipIcon:hover {
   color: var(--accent) !important;
+}
+
+.resultsIntro { margin-bottom: 18px; }
+.resultsIntro h1 { font-size: clamp(1.4rem, 2.5vw, 2rem); line-height: 1.25; }
+.resultsIntro p, .methodNote { color: var(--text-2); font-size: .9rem; line-height: 1.65; margin: 12px 0 18px; }
+.demoBadge { display: inline-block; margin-top: 10px; padding: 4px 9px; border: 1px solid var(--border-hover); border-radius: var(--radius-sm); background: var(--accent-light); color: var(--accent); font-size: .8rem; }
+.formulaBanner { margin-top: 24px; box-shadow: none; }
+.formulaTitle { font-size: 1.05rem; margin-bottom: 4px; }
+.formulaLegend { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.signalContribution { min-width: 0; padding: 12px; background: var(--bg-secondary); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 6px; }
+.signalContribution strong { color: var(--text); font-size: .85rem; line-height: 1.4; }
+.signalContribution strong i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.signalContribution span, .signalContribution small { color: var(--text-2); font-size: .8rem; }
+.signalContribution b { font-family: var(--font-mono); color: var(--accent); font-size: .95rem; }
+.methodDetails { font-size: .88rem; color: var(--text-2); line-height: 1.7; }
+.methodDetails summary { cursor: pointer; color: var(--text); padding: 6px 0; }
+.methodDetails p { margin: 14px 0; }
+.scoreEquation { display: block; color: var(--accent); overflow-wrap: anywhere; margin: 12px 0; }
+.methodTableWrap { overflow-x: auto; }
+.methodTable { width: 100%; border-collapse: collapse; text-align: left; }
+.methodTable th, .methodTable td { padding: 9px; border-bottom: 1px solid var(--border); font-size: .82rem; }
+.historyNote { font-size: .8rem; color: var(--text-2); line-height: 1.65; margin: 8px 0 14px; }
+.historyItem { text-align: left; }
+.historyItem small { font-size: .78rem; line-height: 1.6; }
+.sidebarLabel { font-size: .73rem; }
+.barPct { min-width: 66px; color: var(--text-2); }
+.professionBarPct { white-space: nowrap; font-size: .8rem; }
+.mobileActions { display: none; }
+
+@media (min-width: 901px) and (max-width: 1440px) {
+  .layout, .layoutRightClosed { grid-template-columns: 260px minmax(0, 1fr) 0; }
+  .layoutLeftClosed, .layoutLeftClosed.layoutRightClosed { grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .chatSidebar { position: fixed; top: 86px; right: 0; bottom: 0; height: calc(100dvh - 86px); z-index: 95; }
+}
+@media (min-width: 1441px) {
+  .chatOverlay { display: none; }
+}
+@media (max-width: 1200px) {
+  .formulaLegend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  .tab { width: 100%; font-size: .82rem; }
+  .formulaBanner { padding: 14px; }
+  .professionBarRow { grid-template-columns: 28px minmax(0, 1fr) 88px; gap: 8px; }
+  .professionBarTrack { grid-column: 2 / 4; grid-row: 2; }
+  .professionBarPct { grid-column: 3; grid-row: 1; }
+  .professionBarName { white-space: normal; }
+}
+
+@media (max-width: 900px) {
+  .mobileActions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .mobileActions .actionBtn { width: auto; }
 }

@@ -1,3 +1,5 @@
+import threading
+
 from services import course_finder as course_finder_module
 from services.course_finder import CourseFinderService
 
@@ -14,6 +16,8 @@ def make_course_finder(monkeypatch):
         }
 
     service = CourseFinderService.__new__(CourseFinderService)
+    service._cache_lock = threading.Lock()
+    service._course_cache = {}
     service.profession_profiles = {
         "Machine Learning Engineer": {
             "libraries": ["pytorch"],

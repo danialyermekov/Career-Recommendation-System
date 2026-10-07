@@ -59,6 +59,7 @@ def test_roadmap_contains_course_recommendations(recommendation_response):
 def test_chat_uses_stored_recommendation_context(client, recommendation_response):
     response = client.post(
         "/chat",
+        headers={"X-LLM-Provider": "gemini", "X-LLM-API-Key": "test-session-key"},
         json={
             "session_id": recommendation_response["session_id"],
             "history": [],
@@ -74,6 +75,7 @@ def test_chat_uses_stored_recommendation_context(client, recommendation_response
 def test_chat_stream_returns_server_sent_events(client, recommendation_response):
     response = client.post(
         "/chat/stream",
+        headers={"X-LLM-Provider": "gemini", "X-LLM-API-Key": "test-session-key"},
         json={
             "session_id": recommendation_response["session_id"],
             "history": [],

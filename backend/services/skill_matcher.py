@@ -34,7 +34,8 @@ class SkillMatcherService:
         if not student_skills:
             return {name: 0.0 for name in self.profession_names}
 
-        student_doc = " ".join(student_skills)
+        # The vectorizer includes bigrams, so set iteration order must be stable.
+        student_doc = " ".join(sorted(student_skills))
         student_vector = self.vectorizer.transform([student_doc]) 
 
         scores = cosine_similarity(student_vector, self.profession_vectors)[0]
@@ -58,7 +59,7 @@ class SkillMatcherService:
             if normalized and normalized not in STOP_WORDS:
                 student_skills.add(normalized)
 
-        student_doc = " ".join(student_skills)
+        student_doc = " ".join(sorted(student_skills))
         student_vector = self.vectorizer.transform([student_doc]) 
 
         vocab = self.vectorizer.vocabulary_
