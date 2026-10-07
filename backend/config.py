@@ -3,6 +3,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 MODELS_DIR = BASE_DIR / 'models'
 DATA_DIR   = BASE_DIR / 'data'
+DB_PATH    = DATA_DIR / 'career_advisor.sqlite3'
 
 # Classifier
 CLASSIFIER_PATH   = MODELS_DIR / 'classifier_model.joblib'
@@ -21,7 +22,7 @@ PROFESSION_NAMES_PATH  = MODELS_DIR / 'profession_names.joblib'
 
 # Roadmap + courses
 ROADMAP_PATH  = MODELS_DIR / 'profession_profiles.json'
-COURSES_PATH  = DATA_DIR   / 'combined_courses.csv'
+COURSES_PATH  = DATA_DIR   / 'all_courses.csv'
 
 # Courses from Roadmap
 TOP_N_COURSES = 1

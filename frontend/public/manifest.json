@@ -1,0 +1,10 @@
+{
+  "short_name": "CareerFlow",
+  "name": "CareerFlow — IT career recommendations",
+  "description": "Compare IT career directions and explore skill gaps and learning steps.",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#07090d",
+  "background_color": "#07090d"
+}

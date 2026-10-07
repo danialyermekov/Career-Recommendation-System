@@ -1,86 +1,178 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-
-/* ─── Dark theme (default) ─────────────────────────────── */
 :root {
   color-scheme: dark;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
-  --transition: 0.2s ease;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
+  --transition: 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 22px;
+  --radius-full: 999px;
 
-  --bg:           #111110;
-  --bg-secondary: #181817;
-  --bg-tertiary:  #1f1f1e;
-  --border:       #2a2a28;
-  --border-hover: #3e3e3b;
-  --text:         #ededec;
-  --text-2:       #b1b1ae;
-  --text-3:       #797975;
-  --accent:       #4f8ef7;
-  --accent-hover: #3b7ef0;
-  --accent-light: rgba(79, 142, 247, 0.12);
-  --warning:      #e8a045;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
-  --shadow-md: 0 4px 8px rgba(0,0,0,.35);
-  --shadow-lg: 0 12px 28px rgba(0,0,0,.5);
+  --bg: #07090d;
+  --bg-secondary: #0d1118;
+  --bg-tertiary: #111722;
+  --panel: rgba(13, 17, 24, 0.72);
+  --panel-strong: rgba(18, 24, 35, 0.88);
+  --nav-bg: rgba(8, 11, 16, 0.72);
+  --border: rgba(159, 176, 205, 0.16);
+  --border-hover: rgba(159, 176, 205, 0.34);
+  --grid-line: rgba(139, 160, 196, 0.08);
+  --orbit-line: rgba(132, 188, 255, 0.22);
+
+  --text: #f6f8fb;
+  --text-soft: #c9d7ea;
+  --text-2: #aab7cb;
+  --text-3: #8c9ab0;
+
+  --accent: #68d8ff;
+  --accent-hover: #8be4ff;
+  --accent-contrast: #061017;
+  --accent-light: rgba(104, 216, 255, 0.12);
+  --accent-glow: transparent;
+  --success: #59e3a6;
+  --warning: #ffbd6b;
+  --danger: #ff667c;
+  --color-error: #ff8a9a;
+  --color-error-highlight: rgba(255, 102, 124, 0.12);
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.26);
+  --shadow-md: 0 20px 60px rgba(0,0,0,.28), 0 1px 0 rgba(255,255,255,.03) inset;
+  --shadow-lg: 0 32px 90px rgba(0,0,0,.42), 0 1px 0 rgba(255,255,255,.05) inset;
 }
 
-/* ─── Light theme ────────────────────────────────────────────── */
 [data-theme="light"] {
   color-scheme: light;
-  --bg:           #fafaf9;
-  --bg-secondary: #f4f4f2;
-  --bg-tertiary:  #eeeeeb;
-  --border:       #cececb;
-  --border-hover: #848483;
-  --text:         #111110;
-  --text-2:       #252525;
-  --text-3:       #515151;
-  --accent:       #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-light: rgba(37, 99, 235, 0.08);
-  --warning:      #c2680a;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.05), 0 1px 3px rgba(0,0,0,.04);
-  --shadow-md: 0 4px 8px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.04);
-  --shadow-lg: 0 12px 28px rgba(0,0,0,.09), 0 4px 10px rgba(0,0,0,.05);
+  --bg: #f6f8fb;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #eef3f9;
+  --panel: rgba(255, 255, 255, 0.72);
+  --panel-strong: rgba(255, 255, 255, 0.9);
+  --nav-bg: rgba(255, 255, 255, 0.76);
+  --border: rgba(31, 45, 68, 0.13);
+  --border-hover: rgba(31, 45, 68, 0.28);
+  --grid-line: rgba(42, 68, 105, 0.08);
+  --orbit-line: rgba(0, 119, 182, 0.18);
+
+  --text: #0d1522;
+  --text-soft: #32465f;
+  --text-2: #43546a;
+  --text-3: #61718a;
+
+  --accent: #006dfc;
+  --accent-hover: #0059d6;
+  --accent-contrast: #ffffff;
+  --accent-light: rgba(0, 109, 252, 0.1);
+  --accent-glow: transparent;
+  --success: #0f9f6e;
+  --warning: #bd6b00;
+  --danger: #d6294d;
+  --color-error: #b91c3d;
+  --color-error-highlight: rgba(214, 41, 77, 0.11);
+
+  --shadow-sm: 0 1px 2px rgba(23, 37, 56, .06);
+  --shadow-md: 0 22px 58px rgba(20, 38, 64, .1), 0 1px 0 rgba(255,255,255,.8) inset;
+  --shadow-lg: 0 34px 90px rgba(20, 38, 64, .16), 0 1px 0 rgba(255,255,255,.86) inset;
 }
 
-/* ─── Base ───────────────────────────────────────────────────── */
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
-  background-color: var(--bg);
-  /* remove transition from html to avoid flash and grey background bugs */
+  text-rendering: optimizeLegibility;
+  background: var(--bg);
+  scroll-behavior: smooth;
 }
 
 body {
-  font-family: var(--font-sans);
-  background-color: var(--bg);
-  color: var(--text);
-  line-height: 1.6;
-  transition: color var(--transition); /* better not to animate background on body, or only on body */
   min-height: 100vh;
   overflow-x: hidden;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
 }
 
 #root {
   min-height: 100vh;
-  background-color: var(--bg);
-  transition: background-color var(--transition);
+  background: transparent;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; }
+.appShell {
+  position: relative;
+  min-height: 100vh;
+  isolation: isolate;
+}
+
+.dataGrid {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 72px 72px;
+  opacity: .55;
+  mask-image: linear-gradient(to bottom, black, transparent 86%);
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent 86%);
+}
+
+.appError {
+  position: fixed;
+  top: 88px;
+  left: 50%;
+  z-index: 120;
+  width: min(620px, calc(100% - 32px));
+  translate: -50% 0;
+  padding: 13px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--color-error-highlight);
+  color: var(--color-error);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(18px);
+  font-size: .9rem;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-3) 40%, transparent);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
 
-/* Selection */
-::selection { background: var(--accent-light); color: var(--accent); }
+::selection {
+  background: var(--accent-light);
+  color: var(--text);
+}
 
-button { cursor: pointer; font-family: var(--font-sans); }
-input, textarea, select { font-family: var(--font-sans); }
-a { color: var(--accent); text-decoration: none; }
+button {
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+
+input, textarea, select {
+  font-family: var(--font-sans);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}

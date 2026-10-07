@@ -1,7 +1,20 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 import styles from './Results.module.css'
-import { sendChatStream } from '../utils/api';
+import { getScoreBreakdown, formatMatchScore, formatMatchPoints } from '../utils/scoring'
+import { isDemoSession } from '../utils/demoProfile'
+import LLMSettings from '../components/LLMSettings'
+import { LLM_PROVIDERS, LLM_SETTINGS_EVENT } from '../utils/llmSettings'
+import {
+  clearRecommendationHistory,
+  getRecommendationHistory,
+  getRecommendationState,
+  saveCourseFilterPreferences,
+  saveRoadmapProgress,
+  sendChatStream,
+  transcribeVoice,
+  filterCourses as fetchFilteredCourses
+} from '../utils/api';
 /* ─── Constants ─────────────────────────────────────────────── */
 const CATEGORY_ICONS = {
   programming: '</>',
@@ -20,21 +33,212 @@ const BAR_COLORS = {
   market_share:  '#f0943a',
 }
 const BAR_TOOLTIPS = {
-  ru: {
-    skill_match:   'Насколько ваши технические навыки соответствуют требованиям профессии',
-    profile_match: 'Насколько ваш профиль подходит для этого карьерного пути',
-    trend_score:   'Тренд рыночного спроса на данную профессию',
-    market_share:  'Доля рынка вакансий, занимаемая этой профессией',
-  },
   en: {
-    skill_match:   'How well your technical skills match the profession requirements',
-    profile_match: 'How your overall profile fits this career path',
-    trend_score:   'Market demand trend for this profession',
-    market_share:  'Vacancy market share occupied by this profession',
+    skill_match: 'Normalized TF-IDF cosine similarity. 100 is the strongest match among the scored careers.',
+    profile_match: 'Profile classifier output divided by the sum across careers. It is not career-success probability.',
+    trend_score: 'Historical demand estimate relative to the track’s weekly peak, normalized by the largest trend signal.',
+    market_share: 'Relative demand signal: 100 means the largest share among these tracks, not 100% of all jobs.',
+  },
+  ru: {
+    skill_match: 'Нормализованное TF-IDF косинусное сходство. 100 — наибольшее сходство среди оцениваемых профессий.',
+    profile_match: 'Выход классификатора профиля, делённый на сумму по профессиям. Это не вероятность карьерного успеха.',
+    trend_score: 'Историческая оценка спроса относительно недельного пика профессии, нормализованная по максимальному сигналу.',
+    market_share: 'Относительный сигнал спроса: 100 означает наибольшую долю среди этих направлений, а не 100% всех вакансий.',
+  },
+  kk: {
+    skill_match: 'Нормаланған TF-IDF косинустық ұқсастығы. 100 — бағаланатын бағыттар арасындағы ең үлкен ұқсастық.',
+    profile_match: 'Профиль классификаторының нәтижесі мамандықтар қосындысына бөлінеді. Бұл мансаптық табыс ықтималдығы емес.',
+    trend_score: 'Тарихи сұраныс бағасы апталық шыңға қатысты, ең үлкен тренд сигналына нормаланған.',
+    market_share: 'Салыстырмалы сұраныс: 100 осы бағыттардағы ең үлкен үлесті білдіреді, барлық вакансияның 100%-ын емес.',
   },
 }
 
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+
+const detectCourseLanguage = course => {
+  if (course?.language) return course.language
+  const text = `${course?.title || ''} ${course?.description || ''}`
+  if (/[ӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(text)) return 'kk'
+  return /[А-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі]/.test(text) ? 'ru' : 'en'
+}
+
+const COURSE_FILTER_DEFAULTS = {
+  certificate: 'all',
+  price: 'all',
+  language: 'all',
+  platform: 'all',
+  level: 'all',
+}
+const COURSE_FILTER_KEYS = Object.keys(COURSE_FILTER_DEFAULTS)
+const normalizeFilterValue = value => String(value ?? '').trim().toLowerCase()
+const normalizeCourseLevel = value => {
+  const text = normalizeFilterValue(value || 'Mixed')
+  if (text.includes('beginner') || text.includes('нач')) return 'Beginner'
+  if (text.includes('intermediate') || text.includes('сред')) return 'Intermediate'
+  if (text.includes('advanced') || text.includes('продвин') || text.includes('проф')) return 'Advanced'
+  return 'Mixed'
+}
+const courseHasCertificate = course => course?.certificate === true || normalizeFilterValue(course?.certificate) === 'true'
+const coursePriceType = course => {
+  if (course?.price_type) return normalizeFilterValue(course.price_type)
+  const numeric = Number(course?.price)
+  if (Number.isFinite(numeric)) return numeric <= 0 ? 'free' : 'paid'
+  return normalizeFilterValue(course?.price || 'unknown')
+}
+const formatCoursePrice = (course, t) => {
+  const type = coursePriceType(course)
+  const labels = t.results.courseFilters || {}
+  const numeric = Number(course?.price)
+  if (type === 'free') return labels.free || 'Free'
+  if (Number.isFinite(numeric) && numeric > 0) return numeric.toFixed(2)
+  if (type === 'paid') return labels.paid || 'Paid'
+  return ''
+}
+const normalizeCourse = course => ({
+  ...course,
+  language: detectCourseLanguage(course),
+  level: normalizeCourseLevel(course?.level || course?.difficulty),
+  price_type: coursePriceType(course),
+  certificate: courseHasCertificate(course),
+})
+const courseMatchesFilters = (course, filters = COURSE_FILTER_DEFAULTS) => {
+  const c = normalizeCourse(course)
+  if (filters.certificate === 'with' && !c.certificate) return false
+  if (filters.certificate === 'without' && c.certificate) return false
+  if (filters.price === 'free' && c.price_type !== 'free') return false
+  if (filters.price === 'paid' && c.price_type !== 'paid') return false
+  if (filters.language !== 'all' && c.language !== filters.language) return false
+  if (filters.platform !== 'all' && normalizeFilterValue(c.platform) !== normalizeFilterValue(filters.platform)) return false
+  if (filters.level !== 'all' && c.level !== filters.level) return false
+  return true
+}
+const filterCourses = (courses = [], filters) => courses.map(normalizeCourse).filter(course => courseMatchesFilters(course, filters))
+const getCourseFilterOptions = courses => {
+  const normalized = courses.map(normalizeCourse)
+  return {
+    languages: [...new Set(normalized.map(course => course.language).filter(Boolean))],
+    platforms: [...new Set(normalized.map(course => course.platform).filter(Boolean))].sort(),
+    levels: [...new Set(normalized.map(course => course.level).filter(Boolean))],
+  }
+}
+const activeCourseFilterCount = filters => COURSE_FILTER_KEYS.filter(key => filters[key] && filters[key] !== 'all').length
+
+const normalizeSkillKey = s => String(s || '').toLowerCase().replace(/[^a-z0-9+#]+/g, '_').replace(/^_+|_+$/g, '')
+const pct = (value, max = 1) => Math.max(0, Math.min(100, Math.round((parseFloat(value || 0) / max) * 100)))
+const sumSkillCount = roadmap => Object.values(roadmap || {}).reduce((total, skills) => total + (Array.isArray(skills) ? skills.length : 0), 0)
+const flattenRoadmapSkills = roadmap => Object.entries(roadmap || {}).flatMap(([cat, skills]) =>
+  (Array.isArray(skills) ? skills : []).map(skill => ({ cat, skill }))
+)
+const getProfessionRoadmapSummary = (results, profession) => {
+  const all = results?.roadmaps_by_profession?.[profession]
+  if (all) return all
+  return { full: results?.full_roadmap || {}, gap: {} }
+}
+
+const mergeAudioChunks = chunks => {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const samples = new Float32Array(totalLength)
+  let offset = 0
+  chunks.forEach(chunk => {
+    samples.set(chunk, offset)
+    offset += chunk.length
+  })
+  return samples
+}
+
+const getAudioRms = samples => {
+  if (!samples.length) return 0
+  const sumSquares = samples.reduce((sum, sample) => sum + sample * sample, 0)
+  return Math.sqrt(sumSquares / samples.length)
+}
+
+const encodeWav = (samples, sampleRate) => {
+  const bytesPerSample = 2
+  const blockAlign = bytesPerSample
+  const buffer = new ArrayBuffer(44 + samples.length * bytesPerSample)
+  const view = new DataView(buffer)
+  const writeString = (offset, string) => {
+    for (let i = 0; i < string.length; i += 1) view.setUint8(offset + i, string.charCodeAt(i))
+  }
+
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * blockAlign, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, samples.length * bytesPerSample, true)
+
+  let offset = 44
+  samples.forEach(sample => {
+    const clamped = Math.max(-1, Math.min(1, sample))
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true)
+    offset += bytesPerSample
+  })
+
+  return new Blob([view], { type: 'audio/wav' })
+}
+
+const createWavRecorder = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  const AudioContext = window.AudioContext || window.webkitAudioContext
+  const audioContext = new AudioContext()
+  const source = audioContext.createMediaStreamSource(stream)
+  const processor = audioContext.createScriptProcessor(4096, 1, 1)
+  const mutedOutput = audioContext.createGain()
+  const chunks = []
+
+  mutedOutput.gain.value = 0
+  processor.onaudioprocess = event => {
+    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)))
+  }
+
+  source.connect(processor)
+  processor.connect(mutedOutput)
+  mutedOutput.connect(audioContext.destination)
+
+  return {
+    stop: async () => {
+      processor.disconnect()
+      mutedOutput.disconnect()
+      source.disconnect()
+      stream.getTracks().forEach(track => track.stop())
+      await audioContext.close()
+      const samples = mergeAudioChunks(chunks)
+      return {
+        blob: encodeWav(samples, audioContext.sampleRate),
+        rms: getAudioRms(samples),
+      }
+    },
+  }
+}
+
+const DEPENDENCY_RULES = {
+  fastapi: ['python'],
+  django: ['python'],
+  flask: ['python'],
+  pandas: ['python'],
+  numpy: ['python'],
+  pytorch: ['python'],
+  tensorflow: ['python'],
+  scikit_learn: ['python'],
+  spark: ['python', 'sql'],
+  airflow: ['python'],
+  dbt: ['sql'],
+  tableau: ['sql'],
+  power_bi: ['sql'],
+  react: ['javascript'],
+  next_js: ['javascript', 'react'],
+  node_js: ['javascript'],
+  kubernetes: ['docker'],
+  terraform: ['cloud_computing'],
+}
 
 const ChevronIcon = ({ dir = 'left' }) => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -59,7 +263,7 @@ const CheckIcon = ({ size = 12 }) => (
 )
 
 /* ─── Progress Ring ──────────────────────────────────────────── */
-function ProgressRing({ value, size = 64, stroke = 5, color = '#5b8dee', animKey }) {
+function ProgressRing({ value, size = 64, stroke = 5, color = '#5b8dee', animKey, tooltipText }) {
   const [progress, setProgress] = useState(0)
   const r    = (size - stroke) / 2
   const circ = 2 * Math.PI * r
@@ -72,7 +276,8 @@ function ProgressRing({ value, size = 64, stroke = 5, color = '#5b8dee', animKey
   }, [pct, animKey])
 
   return (
-    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+    <div className={tooltipText ? styles.scoreCircleTooltip : ''} data-tip={tooltipText}
+      style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
       <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
         <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--border)" strokeWidth={stroke}/>
         <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
@@ -86,7 +291,8 @@ function ProgressRing({ value, size = 64, stroke = 5, color = '#5b8dee', animKey
         position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
         justifyContent: 'center', fontSize: size < 60 ? '0.65rem' : '0.78rem',
         fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text)',
-      }}>{pct}%</div>
+        flexDirection: 'column', lineHeight: 1.2,
+      }} aria-label={formatMatchScore(value)}><span>{formatMatchPoints(value)}</span><small style={{ fontSize: '.6rem', color: 'var(--text-2)' }}>/100</small></div>
     </div>
   )
 }
@@ -109,7 +315,7 @@ function AnimatedBar({ value, max = 1, color, animKey, tooltipText }) {
       <div className={`${styles.bar} ${tooltipText ? styles.barTooltipWrap : ''}`} data-tip={tooltipText}>
         <div className={styles.barFill} style={{ width: `${width}%`, background: color, transition: 'width 0.8s cubic-bezier(0.4,0,0.2,1)' }}/>
       </div>
-      <span className={styles.barPct}>{pct}%</span>
+      <span className={styles.barPct}>{pct} / 100</span>
     </div>
   )
 }
@@ -119,6 +325,7 @@ function RadarChart({ data, animKey, lang }) {
   const RADAR_TOOLTIPS = {
     ru: { skill_match: 'Навыки', profile_match: 'Профиль', trend_score: 'Тренд', market_share: 'Рынок' },
     en: { skill_match: 'Skills', profile_match: 'Profile', trend_score: 'Trend', market_share: 'Market' },
+    kk: { skill_match: 'Дағдылар', profile_match: 'Профиль', trend_score: 'Тренд', market_share: 'Нарық' },
   }
   const tips = RADAR_TOOLTIPS[lang] || RADAR_TOOLTIPS.en
 
@@ -159,7 +366,7 @@ function RadarChart({ data, animKey, lang }) {
     skill_match:   Math.min(parseFloat(data.skill_match   ?? 0), 1),
     profile_match: Math.min(parseFloat(data.profile_match ?? 0), 1),
     trend_score:   Math.min(parseFloat(data.trend_score   ?? 0), 1),
-    market_share:  Math.min(parseFloat(data.market_share  ?? 0) / 100, 1),
+    market_share:  Math.min(parseFloat(data.market_share  ?? 0), 1),
   }
 
   const polyPoints = axes.map((ax, i) => pt(i, radarData[ax.key] || 0))
@@ -221,10 +428,549 @@ function RadarChart({ data, animKey, lang }) {
           pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 10,
           boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
         }}>
-          <span style={{ color: tooltip.color, fontWeight: 700 }}>{tooltip.val}%</span> {tooltip.label}
+          <span style={{ color: tooltip.color, fontWeight: 700 }}>{tooltip.val} / 100</span> {tooltip.label}
         </div>
       )}
     </div>
+  )
+}
+
+function ProfessionBarsChart({ professions, rows, profLabel, t, animKey, onSelect }) {
+  const maxScore = Math.max(...professions.map(p => p.final_score || 0), 1)
+  const [hovered, setHovered] = useState(null)
+
+  return (
+    <div className={styles.compareChart}>
+      <div className={styles.compareHeader}>
+        <span>{t.results.compareAll}</span>
+        <small>{t.results.scoreOverview}</small>
+      </div>
+      <div className={styles.professionBars}>
+        {professions.map((p, index) => {
+          const scorePct = pct(p.final_score, maxScore)
+          const tooltip = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}\n${rows
+            .filter(r => p[r.key] != null)
+            .map(r => `${r.label}: ${pct(p[r.key], r.max)} / 100`)
+            .join('\n')}`
+          return (
+            <button
+              key={p.name}
+              type="button"
+              className={`${styles.professionBarRow} ${hovered === p.name ? styles.professionBarRowHover : ''}`}
+              data-tip={tooltip}
+              onMouseEnter={() => setHovered(p.name)}
+              onMouseLeave={() => setHovered(null)}
+              onClick={() => onSelect?.(p.name)}
+            >
+              <span className={styles.professionBarRank}>#{index + 1}</span>
+              <span className={styles.professionBarName}>{profLabel(p.name)}</span>
+              <span className={styles.professionBarTrack}>
+                <span
+                  className={styles.professionBarFill}
+                  style={{ width: `${scorePct}%`, transitionDelay: `${index * 35}ms` }}
+                />
+                <span className={styles.professionBarFactors}>
+                  {rows.map(r => p[r.key] != null && (
+                    <span
+                      key={r.key}
+                      style={{
+                        width: `${(p.contributions?.[r.key] ?? 0)}%`,
+                        background: BAR_COLORS[r.key],
+                        opacity: 0.85,
+                        boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.1)'
+                      }}
+                    />
+                  ))}
+                </span>
+              </span>
+              <span className={styles.professionBarPct}>{formatMatchScore(p.final_score)}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function MultiProfessionRadar({ professions, profLabel, rows, t, animKey }) {
+  const [tooltip, setTooltip] = useState(null)
+  const [opacity, setOpacity] = useState(0)
+
+  useEffect(() => {
+    setOpacity(0)
+    const timer = setTimeout(() => setOpacity(1), 60)
+    return () => clearTimeout(timer)
+  }, [animKey])
+
+  const axes = professions
+  const size = 330
+  const cx = size / 2
+  const cy = size / 2
+  const r = 112
+  const levels = [0.25, 0.5, 0.75, 1]
+  const angleOf = i => (Math.PI * 2 * i / axes.length) - Math.PI / 2
+  const point = (i, ratio) => ({
+    x: cx + r * ratio * Math.cos(angleOf(i)),
+    y: cy + r * ratio * Math.sin(angleOf(i)),
+  })
+  const poly = (key, max = 1) => axes
+    .map((p, i) => point(i, Math.min(parseFloat(p[key] || 0) / max, 1)))
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + ' Z'
+  const rings = levels.map(level => axes.map((_, i) => point(i, level))
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ') + ' Z')
+
+  return (
+    <div className={styles.radarCompare}>
+      <div className={styles.compareHeader}>
+        <span>{t.results.chartModes.radar}</span>
+        <small>{t.results.compareAll}</small>
+      </div>
+      <div className={styles.radarCompareBody}>
+        <svg width={size} height={size} viewBox={`-44 -44 ${size + 88} ${size + 88}`}
+          style={{ opacity, transition: 'opacity .35s ease' }}>
+          {rings.map((d, i) => (
+            <path key={i} d={d} fill="none" stroke="var(--border)" strokeWidth={i === rings.length - 1 ? 1.5 : 1}/>
+          ))}
+          {axes.map((p, i) => {
+            const end = point(i, 1)
+            const label = profLabel(p.name)
+            return (
+              <g key={p.name}>
+                <line x1={cx} y1={cy} x2={end.x} y2={end.y} stroke="var(--border)" />
+                <text
+                  x={point(i, 1.27).x}
+                  y={point(i, 1.27).y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize="10"
+                  fill="var(--text-2)"
+                  fontFamily="var(--font-mono)"
+                >
+                  {label.length > 15 ? label.slice(0, 14) + '…' : label}
+                </text>
+              </g>
+            )
+          })}
+          <path d={poly('final_score')} fill="#5b8dee" fillOpacity=".17" stroke="#5b8dee" strokeWidth="2.5"/>
+          <path d={poly('skill_match')} fill="none" stroke="#4caf82" strokeWidth="1.8" strokeDasharray="5 4"/>
+          <path d={poly('profile_match')} fill="none" stroke="#9b6ddf" strokeWidth="1.8" strokeDasharray="2 4"/>
+          {axes.map((p, i) => {
+            const pos = point(i, Math.min(p.final_score || 0, 1))
+            const tooltipText = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}\n${rows.map(r => `${r.label}: ${pct(p[r.key], r.max)} / 100`).join('\n')}`
+            return (
+              <circle
+                key={p.name}
+                cx={pos.x}
+                cy={pos.y}
+                r="6"
+                fill="#5b8dee"
+                stroke="var(--bg)"
+                strokeWidth="2"
+                onMouseEnter={() => setTooltip({ x: pos.x, y: pos.y, text: tooltipText })}
+                onMouseLeave={() => setTooltip(null)}
+              />
+            )
+          })}
+        </svg>
+        <div className={styles.radarLegend}>
+          <span><i style={{ background: '#5b8dee' }}/>{t.results.scoreOverview}</span>
+          <span><i style={{ background: '#4caf82' }}/>{t.results.skillMatch}</span>
+          <span><i style={{ background: '#9b6ddf' }}/>{t.results.classification}</span>
+        </div>
+        {tooltip && (
+          <div className={styles.chartTooltip} style={{ left: tooltip.x + 42, top: tooltip.y + 24 }}>
+            {tooltip.text}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SkillGapComparison({ professions, results, profLabel, t, onSelect }) {
+  return (
+    <div className={styles.gapCompare}>
+      <div className={styles.compareHeader}>
+        <span>{t.results.gapByProfession}</span>
+        <small>{t.results.compareAll}</small>
+      </div>
+      {professions.map(p => {
+        const summary = getProfessionRoadmapSummary(results, p.name)
+        const total = sumSkillCount(summary.full)
+        const gap = sumSkillCount(summary.gap)
+        const known = Math.max(total - gap, 0)
+        const completion = total ? Math.round((known / total) * 100) : 0
+        const tooltip = `${profLabel(p.name)}\n${t.results.youKnow}: ${known}/${total}\n${t.results.toLearn}: ${gap}`
+        return (
+          <button key={p.name} type="button" className={styles.gapCompareRow} data-tip={tooltip} onClick={() => onSelect?.(p.name)}>
+            <span className={styles.gapCompareName}>{profLabel(p.name)}</span>
+            <span className={styles.gapCompareTrack}>
+              <span className={styles.gapKnown} style={{ width: `${completion}%` }}/>
+            </span>
+            <span className={styles.gapCompareMeta}>{known}/{total}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function ScoreCircleGrid({ professions, rows, profLabel, t, onSelect }) {
+  return (
+    <div className={styles.scoreCircleGrid}>
+      {professions.map(p => {
+        const tooltip = `${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}\n${rows.map(r => `${r.label}: ${pct(p[r.key], r.max)} / 100`).join('\n')}`
+        return (
+          <button key={p.name} className={styles.scoreCircleCard} onClick={() => onSelect?.(p.name)}>
+            <ProgressRing value={p.final_score ?? 0} size={58} stroke={4} color="#5b8dee" animKey={p.name} tooltipText={tooltip}/>
+            <span>{profLabel(p.name)}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function SkillImpactChart({ explanation, profName, t }) {
+  const isShap = !!explanation?.shap_explanations
+  const rawItems = explanation?.shap_explanations || explanation?.items || []
+  if (!rawItems.length) return null
+
+  // Standardize the items so the rendering and lists work seamlessly
+  const items = rawItems.map(item => {
+    if (isShap) {
+      const val = item.influence_percent
+      const present = item.raw_value > 0
+      let direction = 'positive'
+      if (val < 0) {
+        direction = present ? 'negative' : 'missing'
+      }
+      const absVal = Math.abs(val)
+      let magnitude = 'slightly'
+      if (absVal >= 15.0) {
+        magnitude = 'strongly'
+      } else if (absVal >= 5.0) {
+        magnitude = 'moderately'
+      }
+
+      return {
+        skill: item.label || item.feature_name,
+        feature: item.feature_name,
+        value: val,
+        abs_value: absVal,
+        present: present,
+        direction: direction,
+        magnitude: magnitude,
+        text: val >= 0 
+          ? `${item.label || item.feature_name} slightly increased confidence.`
+          : `${item.label || item.feature_name} gap slightly reduced confidence.`,
+      }
+    } else {
+      const totalAbsVal = rawItems.reduce((sum, i) => sum + Math.abs(i.value || 0), 0)
+      const pct = totalAbsVal > 1e-9 ? ((item.value || 0) / totalAbsVal) * 100 : 0
+      return {
+        ...item,
+        value: pct,
+        abs_value: Math.abs(pct),
+      }
+    }
+  })
+
+  const maxAbsPercent = Math.max(...items.map(item => item.abs_value), 0.001)
+  const positive = items.filter(item => item.value > 0)
+  const negative = items.filter(item => item.value < 0)
+  const methodText = explanation.method === 'catboost_shap' ? t.results.shapMethod : t.results.shapFallback
+  const magnitude = item => t.results.impactMagnitude?.[item.magnitude] || item.magnitude
+  const itemText = item => {
+    const isSoft = ['communication', 'leadership', 'problem_solving', 'teamwork', 'adaptability'].includes(item.feature)
+    const isPresent = !!item.present
+    if (item.direction === 'positive') return t.results.skillPositiveText?.(item.skill, magnitude(item), profName, isSoft, isPresent) || item.text
+    if (item.direction === 'missing') return t.results.skillMissingText?.(item.skill, magnitude(item), profName, isSoft, isPresent) || item.text
+    return t.results.skillNegativeText?.(item.skill, magnitude(item), profName, isSoft, isPresent) || item.text
+  }
+
+  return (
+    <div className={styles.skillExplainBlock}>
+      <div className={styles.skillExplainHeader}>
+        <div>
+          <strong>{t.results.skillImpactTitle}</strong>
+          <span>{methodText}</span>
+        </div>
+        <button className={styles.infoPill} type="button" title={t.results.shapTooltip}>{explanation.method === 'catboost_shap' ? 'SHAP' : (t.results.infoPill || 'Info')}</button>
+      </div>
+      <p className={styles.explainText}>
+        {positive[0] ? itemText(positive[0]) : t.results.noPositiveSkills}{' '}
+        {negative[0] ? itemText(negative[0]) : t.results.noMissingSkills}
+      </p>
+      <div className={styles.skillImpactChart}>
+        {items.map(item => {
+          const barWidth = Math.max(2, (item.abs_value / maxAbsPercent) * 50)
+          const positiveImpact = item.value >= 0
+          return (
+            <div key={item.feature || item.skill} className={styles.skillImpactRow} title={itemText(item)}>
+              <span className={styles.skillImpactName}>{item.skill}</span>
+              <span className={styles.skillImpactTrack}>
+                <span className={styles.skillImpactBaseline} />
+                <i
+                  className={positiveImpact ? styles.skillImpactPositive : styles.skillImpactNegative}
+                  style={
+                    positiveImpact
+                      ? { left: '50%', width: `${barWidth}%`, position: 'absolute', height: '100%', borderRadius: '0 999px 999px 0' }
+                      : { right: '50%', width: `${barWidth}%`, position: 'absolute', height: '100%', borderRadius: '999px 0 0 999px' }
+                  }
+                />
+              </span>
+              <span className={styles.skillImpactValue}>{positiveImpact ? '+' : ''}{item.value.toFixed(2)}%</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className={styles.skillImpactLegend}>
+        {t.results.shapLegend || "Positive values (+) increase the probability of this career track, while negative values (-) decrease it."}
+      </div>
+      <div className={styles.skillImpactLists}>
+        <div>
+          <strong>{t.results.topPositiveSkills}</strong>
+          {positive.length ? positive.slice(0, 4).map(item => (
+            <p key={item.feature || item.skill}>{itemText(item)}</p>
+          )) : <p>{t.results.noPositiveSkills}</p>}
+        </div>
+        <div>
+          <strong>{t.results.topMissingSkills}</strong>
+          {negative.length ? negative.slice(0, 4).map(item => (
+            <p key={item.feature || item.skill}>{itemText(item)}</p>
+          )) : <p>{t.results.noMissingSkills}</p>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ExplainabilityPanel({ profession, profLabel, t, skillExplanation }) {
+  if (!profession) return null
+
+  return (
+    <section className={styles.explainCard}>
+      <div className={styles.compareHeader}>
+        <span>{t.results.explainability}</span>
+        <small>{t.results.featureImportance}</small>
+      </div>
+      <p className={styles.explainText}>
+        {t.results.whyTop ? t.results.whyTop(profLabel(profession.name)) : profLabel(profession.name)}
+      </p>
+      <SkillImpactChart explanation={skillExplanation} profName={profLabel(profession.name)} t={t}/>
+    </section>
+  )
+}
+
+function SkillDependencyTree({ roadmap, doneSkills, formSkills, t }) {
+  const learned = new Set([
+    ...(formSkills || []).map(normalizeSkillKey),
+    ...Array.from(doneSkills || []).map(key => normalizeSkillKey(key.split('::')[1] || key)),
+  ])
+  const items = flattenRoadmapSkills(Object.fromEntries(
+    Object.entries(roadmap || {}).map(([cat, skills]) => [cat, skills.map(item => item.skill)])
+  ))
+  const enriched = items.map(item => {
+    const key = normalizeSkillKey(item.skill)
+    const prerequisites = DEPENDENCY_RULES[key] || []
+    const isDone = learned.has(key)
+    const ready = prerequisites.every(dep => learned.has(normalizeSkillKey(dep)))
+    return { ...item, key, prerequisites, isDone, ready }
+  })
+  const next = enriched.find(item => !item.isDone && item.ready) || enriched.find(item => !item.isDone)
+
+  if (!enriched.length) return null
+
+  return (
+    <section className={styles.dependencyPanel}>
+      <div className={styles.compareHeader}>
+        <span>{t.results.dependencyTree}</span>
+        {next && <small>{t.results.nextStep}: {cap(next.skill)}</small>}
+      </div>
+      <div className={styles.dependencyTree}>
+        {enriched.map(item => (
+          <div key={`${item.cat}-${item.skill}`} className={`${styles.dependencyNode} ${item.isDone ? styles.dependencyDone : item.ready ? styles.dependencyReady : styles.dependencyLocked}`}>
+            <div className={styles.dependencyNodeTop}>
+              <span>{cap(item.skill)}</span>
+              <strong>{item.isDone ? t.results.learned : item.ready ? t.results.ready : t.results.locked}</strong>
+            </div>
+            <div className={styles.dependencyPrereq}>
+              <span>{t.results.prerequisites}</span>
+              <div>
+                {item.prerequisites.length
+                  ? item.prerequisites.map(dep => (
+                    <i key={dep} className={learned.has(normalizeSkillKey(dep)) ? styles.prereqDone : ''}>{cap(dep.replace(/_/g, ' '))}</i>
+                  ))
+                  : <i className={styles.prereqDone}>{t.results.ready}</i>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function CourseFilters({ filters, options, onChange, onReset, loading, t }) {
+  const labels = t.results.courseFilters
+  const languageLabels = t.results.courseLanguages || {}
+  const activeCount = activeCourseFilterCount(filters)
+  const setFilter = (key, value) => onChange({ ...filters, [key]: value })
+  const languageOptions = ['en', 'ru', 'kk', 'other', ...(options.languages || [])]
+    .filter((value, index, arr) => arr.indexOf(value) === index)
+  const levelOptions = ['Beginner', 'Intermediate', 'Advanced', 'Mixed', ...(options.levels || [])]
+    .filter((value, index, arr) => arr.indexOf(value) === index)
+  const platformOptions = ['Coursera', 'Stepik', 'Udemy', 'edX', 'Udacity', ...(options.platforms || [])]
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.findIndex(item => normalizeFilterValue(item) === normalizeFilterValue(value)) === index)
+
+  return (
+    <section className={styles.courseFilterPanel}>
+      <div className={styles.compareHeader}>
+        <span>{labels.title}</span>
+        <small>
+          {loading
+            ? <span style={{ opacity: 0.6, fontStyle: 'italic' }}>...</span>
+            : labels.active(activeCount)}
+        </small>
+      </div>
+      <div className={styles.courseFilterGrid}>
+        <label>
+          <span>{labels.certificate}</span>
+          <select value={filters.certificate} onChange={e => setFilter('certificate', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            <option value="with">{labels.withCertificate}</option>
+            <option value="without">{labels.withoutCertificate}</option>
+          </select>
+        </label>
+        <label>
+          <span>{labels.price}</span>
+          <select value={filters.price} onChange={e => setFilter('price', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            <option value="free">{labels.free}</option>
+            <option value="paid">{labels.paid}</option>
+          </select>
+        </label>
+        <label>
+          <span>{labels.language}</span>
+          <select value={filters.language} onChange={e => setFilter('language', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            {languageOptions.map(value => (
+              <option key={value} value={value}>{languageLabels[value] || value}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{labels.platform}</span>
+          <select value={filters.platform} onChange={e => setFilter('platform', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            {platformOptions.map(value => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{labels.level}</span>
+          <select value={filters.level} onChange={e => setFilter('level', e.target.value)}>
+            <option value="all">{labels.all}</option>
+            {levelOptions.map(value => (
+              <option key={value} value={value}>{labels.levels?.[value] || value}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {activeCount > 0 && (
+        <div className={styles.activeFilters}>
+          {COURSE_FILTER_KEYS.filter(key => filters[key] !== 'all').map(key => (
+            <button key={key} type="button" onClick={() => setFilter(key, 'all')}>
+              {labels[key]}: {labels[filters[key]] || languageLabels[filters[key]] || labels.levels?.[filters[key]] || filters[key]}
+            </button>
+          ))}
+          <button type="button" className={styles.resetFilters} onClick={onReset}>{labels.reset}</button>
+        </div>
+      )}
+    </section>
+  )
+}
+
+export function getCourseProviderUrl(course) {
+  if (!course) return null
+  if (course.url && typeof course.url === 'string' && course.url.startsWith('http')) {
+    return course.url
+  }
+  const title = encodeURIComponent(course.title || '')
+  const platform = (course.platform || '').toLowerCase().trim()
+  if (platform.includes('coursera')) {
+    return `https://www.coursera.org/search?query=${title}`
+  }
+  if (platform.includes('stepik')) {
+    return `https://stepik.org/catalog/search?q=${title}`
+  }
+  if (platform.includes('edx')) {
+    return `https://www.edx.org/search?q=${title}`
+  }
+  if (platform.includes('udacity')) {
+    return `https://www.udacity.com/courses/all?search=${title}`
+  }
+  if (platform.includes('udemy')) {
+    return `https://www.udemy.com/courses/search/?q=${title}`
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(`${course.platform || ''} ${course.title || ''}`.trim())}`
+}
+
+function CourseCard({ course, t, onOpen, onCopy, copied }) {
+  return (
+    <div className={styles.courseWrap}>
+      <div className={styles.course} style={{ cursor: 'pointer' }} onClick={() => onOpen(course)}>
+        <span className={styles.coursePlatform}>{course.platform}</span>
+        <span className={styles.courseTitle}>{course.title}</span>
+        <span className={styles.courseMeta}>
+          {course.rating > 0 && <span className={styles.courseRating}>★ {course.rating}</span>}
+          {course.reviews != null && (
+            <span className={styles.courseReviews}>
+              {Number(course.reviews).toLocaleString()} {t.results.reviews}
+            </span>
+          )}
+          <span className={styles.courseReviews}>{t.results.courseLanguages?.[course.language] || course.language}</span>
+          <span className={styles.courseReviews}>{t.results.courseFilters?.levels?.[course.level] || course.level}</span>
+          {formatCoursePrice(course, t) && <span className={styles.coursePrice}>{formatCoursePrice(course, t)}</span>}
+        </span>
+      </div>
+      <button className={styles.courseCopyBtn} onClick={onCopy}>
+        {copied ? <CheckIcon/> : <CopyIcon/>}
+      </button>
+    </div>
+  )
+}
+
+function RecommendedCoursePanel({ courses, filters, t, onOpen, onCopy, copiedMsg }) {
+  const visible = filterCourses(courses, filters)
+  return (
+    <section className={styles.recommendedCoursesPanel}>
+      <div className={styles.compareHeader}>
+        <span>{t.results.courses}</span>
+        <small>{visible.length}</small>
+      </div>
+      {visible.length === 0 ? (
+        <div className={styles.courseEmptyState}>{t.results.courseEmptyState}</div>
+      ) : (
+        <div className={styles.courseCardGrid}>
+          {visible.slice(0, 8).map((course, index) => (
+            <div key={`${course.skill}-${course.title}-${index}`} className={styles.courseGridItem}>
+              <span className={styles.courseSkillTag}>{cap(course.skill)}</span>
+              <CourseCard
+                course={course}
+                t={t}
+                onOpen={onOpen}
+                copied={copiedMsg === `recommended-${index}`}
+                onCopy={e => onCopy(e, course, `recommended-${index}`)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   )
 }
 const SKILL_IMPLIES = {
@@ -320,17 +1066,16 @@ const SKILL_IMPLIES = {
     "jenkins":          ["groovy"],
 }
 
-function SkillGapRadar({ results, formData, animKey, lang }) {
+function SkillGapRadar({ results, formData, profession, animKey, lang }) {
   const [tooltip, setTooltip] = useState(null)
   const [opacity, setOpacity]  = useState(0)
-  console.log('=== GAP RADAR formData ===', JSON.stringify(formData))
   useEffect(() => {
     setOpacity(0)
     const t = setTimeout(() => setOpacity(1), 60)
     return () => clearTimeout(t)
   }, [animKey])
 
-  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '_')
+  const norm = normalizeSkillKey
   const baseSkills = new Set(
     (formData?.skills || []).map(s =>
       norm(typeof s === 'string' ? s : s.label || s.value || s.name || '')
@@ -354,26 +1099,36 @@ while (changed) {
 }
 
   const studentHas = (skillKey) => {
-  if (studentNorm.has(skillKey)) return true
+    if (studentNorm.has(skillKey)) return true
 
-  const bare = s => s.replace(/[_\d]/g, '').trim()
-  const bareKey = bare(skillKey)
+    const bare = s => s.replace(/[^a-z0-9]/g, '').trim()
+    const bareKey = bare(skillKey)
 
-  for (const sk of studentNorm) {
-    const bareSk = bare(sk)
-    if (!bareSk || bareSk.length < 3) continue
-    if (
-      bareKey === bareSk ||
-      bareKey.includes(bareSk) ||
-      bareSk.includes(bareKey) ||
-      skillKey.split('_')[0] === sk.split('_')[0]
-    ) return true
+    for (const sk of studentNorm) {
+      const bareSk = bare(sk)
+      if (!bareSk) continue
+
+      // For specific short or platform-specific terms, enforce strict matching
+      if (
+        ['sql', 'git', 'go', 'r', 'aws', 'gcp', 'sql_server', 'sqlserver'].includes(bareSk) ||
+        ['sql', 'git', 'go', 'r', 'aws', 'gcp', 'sql_server', 'sqlserver'].includes(bareKey)
+      ) {
+        if (bareKey === bareSk) return true;
+        continue;
+      }
+
+      if (
+        bareKey === bareSk ||
+        bareKey.includes(bareSk) ||
+        bareSk.includes(bareKey) ||
+        skillKey.split('_')[0] === sk.split('_')[0]
+      ) return true
+    }
+    return false
   }
-  return false
-}
 
-  // Get full_roadmap from results - all profession skills
-  const fullRoadmap = results?.full_roadmap || {}
+  const professionSummary = getProfessionRoadmapSummary(results, profession || results?.top_profession)
+  const fullRoadmap = professionSummary.full || {}
 
   // Collect axes: up to 10 skills from full_roadmap
   const axes = []
@@ -423,6 +1178,11 @@ while (changed) {
 
   const knownCount = studentValues.filter(v => v === 1.0).length
   const totalCount = axes.length
+  const text = {
+    ru: { known: 'навыков уже есть', youKnow: 'Знаете', toLearn: 'Нужно изучить' },
+    en: { known: 'skills already known', youKnow: 'You know', toLearn: 'To learn' },
+    kk: { known: 'дағды бар', youKnow: 'Білесің', toLearn: 'Үйрену керек' },
+  }[lang] || { known: 'skills already known', youKnow: 'You know', toLearn: 'To learn' }
 
   return (
     <div style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
@@ -434,7 +1194,7 @@ while (changed) {
       }}>
         <span style={{ color: '#4caf82', fontWeight: 700 }}>{knownCount}</span>
         {' / '}{totalCount}{' '}
-        {lang === 'ru' ? 'навыков уже есть' : 'skills already known'}
+        {text.known}
       </div>
 
       <svg width={size} height={size} viewBox={`-40 -40 ${size + 80} ${size + 80}`}
@@ -497,13 +1257,13 @@ while (changed) {
         <g transform={`translate(${cx - 85}, ${size + 18})`}>
           <circle cx="5" cy="5" r="4" fill="#5b8dee" />  {/* ← was #4caf82, became blue */}
           <text x="14" y="9" fontSize="10" fill="var(--text-2)" fontFamily="var(--font-mono)">
-            {lang === 'ru' ? 'Знаете' : 'You know'}
+            {text.youKnow}
           </text>
         </g>
         <g transform={`translate(${cx + 20}, ${size + 18})`}>
           <circle cx="5" cy="5" r="4" fill="#4caf82" />
           <text x="14" y="9" fontSize="10" fill="var(--text-2)" fontFamily="var(--font-mono)">
-            {lang === 'ru' ? 'Нужно изучить' : 'To learn'}
+            {text.toLearn}
           </text>
         </g>
       </svg>
@@ -553,7 +1313,8 @@ function MetricBars({ data, rows, animKey, lang }) {
 }
 
 /* ─── Score Rows ─────────────────────────────────────────────── */
-function ProfScores({ p, rows, animKey }) {
+function ProfScores({ p, rows, animKey, lang }) {
+  const tips = BAR_TOOLTIPS[lang] || BAR_TOOLTIPS.en
   return (
     <div className={styles.profScores}>
       {rows.map(({ key, label, max }) =>
@@ -565,7 +1326,7 @@ function ProfScores({ p, rows, animKey }) {
               max={max}
               color={BAR_COLORS[key]}
               animKey={animKey}
-              tooltipText={BAR_TOOLTIPS[key]}
+              tooltipText={tips[key]}
             />
           </div>
         ) : null
@@ -575,15 +1336,6 @@ function ProfScores({ p, rows, animKey }) {
 }
 
 /* ─── Vacancy trend ──────────────────────────────────────────── */
-function VacancyTrend({ value }) {
-  if (!value) return null
-  const color = value > 500 ? '#4caf82' : value > 100 ? '#f0943a' : '#9b6ddf'
-  const arrow = value > 500 ? '↑' : value > 100 ? '→' : '↓'
-  return (
-    <span style={{ color, fontFamily: 'var(--font-mono)', fontSize: '0.9rem', marginRight: 4 }}>{arrow}</span>
-  )
-}
-
 /* ─── Helpers ────────────────────────────────────────────────── */
 const copyText = (text) => {
   // Modern API - works only on HTTPS/localhost
@@ -624,8 +1376,28 @@ const stripMarkdown = text => text
   .replace(/> /gm, '')
   .trim()
 
+const isCareerChatAllowed = message => {
+  const text = String(message || '').toLowerCase()
+  const injection = [
+    'ignore previous', 'system prompt', 'developer message', 'reveal instructions',
+    'забудь инструкции', 'игнорируй инструкции', 'системный промпт', 'раскрой инструкции',
+  ]
+  const offTopic = [
+    'bubble sort', 'write code', 'generate code', 'solve math', 'math problem', 'essay',
+    'пузырьковую сортировку', 'напиши код', 'сгенерируй эссе', 'реши задачу', 'математик',
+  ]
+  const career = [
+    'career', 'profession', 'job', 'roadmap', 'skill', 'course', 'recommendation',
+    'карьер', 'професс', 'работ', 'роадмап', 'навык', 'курс', 'рекомендац',
+    'мансап', 'маман', 'жұмыс', 'жоспар', 'дағды', 'курс', 'ұсыныс',
+  ]
+  if (injection.some(pattern => text.includes(pattern))) return false
+  if (offTopic.some(pattern => text.includes(pattern)) && !career.some(pattern => text.includes(pattern))) return false
+  return true
+}
+
 /* ─── Course description modal ───────────────────────────────── */
-function CourseModal({ course, onClose }) {
+function CourseModal({ course, onClose, t }) {
   useEffect(() => {
     const handler = e => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
@@ -652,31 +1424,42 @@ function CourseModal({ course, onClose }) {
         {course.description ? (
           <p className={styles.modalDesc}>{course.description}</p>
         ) : (
-          <p className={styles.modalDescEmpty}>No description available.</p>
+          <p className={styles.modalDescEmpty}>{t.results.noDescription}</p>
         )}
-        {course.url && (
-          <a href={course.url} target="_blank" rel="noopener noreferrer" className={styles.modalLink}>
-            Open course →
-          </a>
-        )}
+        {(() => {
+          const providerUrl = getCourseProviderUrl(course)
+          if (!providerUrl) return null
+          const linkLabel = course.url
+            ? t.results.openCourse
+            : (t.results.openCourseSearch?.replace('{provider}', course.platform || 'Provider') || `${t.results.openCourse} (${course.platform})`)
+          return (
+            <a href={providerUrl} target="_blank" rel="noopener noreferrer" className={styles.modalLink}>
+              {linkLabel} →
+            </a>
+          )
+        })()}
+        <p style={{ marginTop: 14, fontSize: '0.8rem', color: 'var(--text-3, #888)', lineHeight: 1.45 }}>
+          {t.results.courseCatalogNote || t.review.roadmapNote}
+        </p>
       </div>
     </div>
   )
 }
 
 /* ─── Deep Mode Button ───────────────────────────────────────── */
-function DeepModeBtn({ active, onClick, lang }) {
+function DeepModeBtn({ active, onClick, disabled, lang, t }) {
   return (
     <button
       className={`${styles.deepModeBtn} ${active ? styles.deepModeBtnActive : ''}`}
       onClick={onClick}
-      title={active ? (lang === 'ru' ? 'Выключить расширенный анализ' : 'Disable deep analysis') : (lang === 'ru' ? 'Включить расширенный анализ' : 'Enable deep analysis')}
+      disabled={disabled}
+      title={active ? t.results.disableDeep : t.results.enableDeep}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path d="M12 2a7 7 0 0 1 7 7c0 2.5-1.3 4.7-3.3 6L15 21H9l-.3-5.9A7 7 0 0 1 5 9a7 7 0 0 1 7-7z"/>
         <line x1="9" y1="21" x2="15" y2="21"/>
       </svg>
-      <span>{lang === 'ru' ? 'Думать' : 'Thinking'}</span>
+      <span>{t.results.thinking}</span>
       {active && (
         <span className={styles.deepModePulse}/>
       )}
@@ -684,10 +1467,56 @@ function DeepModeBtn({ active, onClick, lang }) {
   )
 }
 
-/* ─── Main Component ─────────────────────────────────────────── */
-export default function Results({ results, formData, onBack, onNewAnalysis }) {
-  const { t, lang } = useApp()
+/* ─── Scoring Formula Header ─────────────────────────────────── */
+function ScoringFormulaHeader({ results, profession, t }) {
+  const components = getScoreBreakdown(results, profession)
+  const labels = {
+    profile_match: t.results.classification, skill_match: t.results.skillMatch,
+    trend_score: t.results.trend, market_share: t.results.marketShare,
+  }
+  const descriptions = [t.results.formulaLegendProfile, t.results.formulaLegendSkill, t.results.formulaLegendTrend, t.results.formulaLegendShare]
+  const hasWeights = components.every(item => item.weight != null)
+  return (
+    <section className={styles.formulaBanner} aria-label={t.review.scoreTitle}>
+      <h2 className={styles.formulaTitle}>{t.review.scoreTitle}</h2>
+      <p className={styles.methodNote}>{t.review.scoreNote}</p>
+      <div className={styles.formulaLegend}>
+        {components.map(item => (
+          <div key={item.key} className={styles.signalContribution}>
+            <strong><i style={{ background: BAR_COLORS[item.key] }} />{labels[item.key]}</strong>
+            <span>{item.weight != null ? `${Math.round(item.weight * 100)}% ${t.review.weight.toLowerCase()}` : '—'}</span>
+            <b>{item.contribution == null ? '—' : item.contribution.toFixed(2)} {t.review.contribution}</b>
+            <small>{(item.value * 100).toFixed(2)} × {item.weight == null ? '—' : item.weight.toFixed(2)}</small>
+          </div>
+        ))}
+      </div>
+      <details className={styles.methodDetails}>
+        <summary>{t.review.calculation}</summary>
+        <p>{t.review.normalization}</p>
+        {hasWeights ? <code className={styles.scoreEquation}>
+          {components.map(item => `${(item.value * 100).toFixed(2)} × ${item.weight.toFixed(2)}`).join(' + ')} ≈ {formatMatchScore(results.final_scores[profession])}
+        </code> : <p>{t.review.missingWeights}</p>}
+        <div className={styles.methodTableWrap}>
+          <table className={styles.methodTable}>
+            <thead><tr><th>{t.results.factors}</th><th>{t.review.raw}</th><th>{t.review.normalizedValue}</th></tr></thead>
+            <tbody>{components.map(item => <tr key={item.key}>
+              <th scope="row">{labels[item.key]}</th><td>{item.raw.toPrecision(5)}</td><td>{(item.value * 100).toFixed(2)} / 100</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        {components.map((item, index) => <p key={item.key}><strong>{labels[item.key]}: </strong>{descriptions[index]}</p>)}
+        <p>{t.review.marketNote}</p>
+      </details>
+    </section>
+  )
+}
 
+/* ─── Main Component ─────────────────────────────────────────── */
+export default function Results({ results: initialResults, formData, onBack, onRetry, onNewAnalysis, onHistorySelect }) {
+  const { t, lang, llmProvider } = useApp()
+  const voiceSupported = LLM_PROVIDERS.find(p => p.id === llmProvider)?.voice
+
+  const [results,      setResults]      = useState(initialResults)
   const [tab,          setTab]          = useState('best')
   const [doneSkills, setDoneSkills] = useState(new Set())
   const [sortBy,       setSortBy]       = useState('score')
@@ -699,26 +1528,72 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   const [deepMode,     setDeepMode]     = useState(false)
   const [copied,       setCopied]       = useState(null)
   const [leftOpen,     setLeftOpen]     = useState(true)
-  const [rightOpen,    setRightOpen]    = useState(true)
+  const [rightOpen,    setRightOpen]    = useState(false)
   const [pdfLoading,   setPdfLoading]   = useState(false)
   const [openCats,     setOpenCats]     = useState(new Set())
   const [cardKey,      setCardKey]      = useState(0)
   const [copiedMsg,    setCopiedMsg]    = useState(null)
   const [activeCourse, setActiveCourse] = useState(null)   // ← for course modal
+  const [categoryOrder, setCategoryOrder] = useState([])
+  const [skillOrders, setSkillOrders] = useState({})
+  const [dragItem, setDragItem] = useState(null)
+  const [history, setHistory] = useState([])
+  const [savedCurrent, setSavedCurrent] = useState(false)
+  const [listening, setListening] = useState(false)
+  const [voiceNotice, setVoiceNotice] = useState('')
+  const [chatSize, setChatSize] = useState({ width: 360, height: null })
+  const [courseFilters, setCourseFilters] = useState(COURSE_FILTER_DEFAULTS)
+  const [filteredRoadmap, setFilteredRoadmap] = useState(null)   // ← overrides rawRoadmap courses when filters are active
+  const [filterLoading,  setFilterLoading]  = useState(false)
 
   const messagesEndRef = useRef(null)
   const greetedRef     = useRef(false)
   const textareaRef    = useRef(null)
   const abortRef       = useRef(null)
+  const voiceRecorderRef = useRef(null)
+  const voiceAbortRef = useRef(null)
+  const aiVersionRef = useRef(0)
+
+  useEffect(() => {
+    const stopAI = () => {
+      aiVersionRef.current += 1
+      abortRef.current?.abort()
+      voiceAbortRef.current?.abort()
+      const recorder = voiceRecorderRef.current
+      voiceRecorderRef.current = null
+      recorder?.stop().catch(() => {})
+      setListening(false)
+      setVoiceNotice('')
+      setChatLoading(false)
+      setMessages(prev => prev.map(m => ({ ...m, streaming: false })))
+    }
+    window.addEventListener(LLM_SETTINGS_EVENT, stopAI)
+    return () => {
+      aiVersionRef.current += 1
+      window.removeEventListener(LLM_SETTINGS_EVENT, stopAI)
+      abortRef.current?.abort()
+      voiceAbortRef.current?.abort()
+      voiceRecorderRef.current?.stop().catch(() => {})
+    }
+  }, [])
+
+  useEffect(() => {
+    setResults(initialResults)
+    setSelectedProf(null)
+    setSavedCurrent(false)
+  }, [initialResults])
 
   const top_profession = results.top_profession
-  const rawRoadmap     = results.roadmap_with_courses
+  const resultStorageKey = `career-result:${results.session_id || top_profession || 'local'}`
+  const profLabel = name => t.professions?.[name] || name
+  const catLabel = cat => t.categories?.[cat] || cat.replace(/_/g, ' ')
+  const skillWord = n => t.results.skillWord ? t.results.skillWord(n) : `${n} skills`
 
   const ALL_SCORE_ROWS = [
     { key: 'skill_match',   label: t.results.skillMatch,      sortKey: 'skill',   max: 1   },
     { key: 'profile_match', label: t.results.classification,  sortKey: 'profile', max: 1   },
     { key: 'trend_score',   label: t.results.trend,           sortKey: 'trend',   max: 1   },
-    { key: 'market_share',  label: t.results.marketShare,     sortKey: 'market',  max: 100 },
+    { key: 'market_share',  label: t.results.marketShare,     sortKey: 'market',  max: 1 },
   ]
 
   const SORT_OPTIONS = [
@@ -733,20 +1608,18 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
     { key: 'best',    label: t.results.tabs.best    },
     { key: 'all',     label: t.results.tabs.all     },
     { key: 'roadmap', label: t.results.tabs.roadmap },
+    { key: 'history', label: t.review.historyTab },
   ]
 
-  const allProfessions = Object.entries(results.final_scores)
-    .map(([name, final_score]) => ({
-      name,
-      final_score,
-      skill_match:   results.skill_scores?.[name]    ?? 0,
-      profile_match: results.classification_scores?.[name] ?? 0,
-      trend_score:   results.demand_scores?.[name]?.trend_score   ?? 0,
-      market_share:  results.demand_scores?.[name]?.market_share != null
-        ? parseFloat(results.demand_scores[name].market_share * 100).toFixed(1)
-        : null,
+  const allProfessions = Object.entries(results.final_scores).map(([name, final_score]) => {
+    const breakdown = getScoreBreakdown(results, name)
+    return {
+      name, final_score,
+      ...Object.fromEntries(breakdown.map(item => [item.key, item.value])),
+      contributions: Object.fromEntries(breakdown.map(item => [item.key, item.contribution])),
       vacancies_per_week: results.demand_scores?.[name]?.predicted_vacancies ?? null,
-    }))
+    }
+  })
 
   const sorted = [...allProfessions].sort((a, b) => {
     if (sortBy === 'score')   return (b.final_score ?? 0)  - (a.final_score ?? 0)
@@ -760,8 +1633,13 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   const activeProfName = selectedProf || top_profession
   const activeProf     = sorted.find(p => p.name === activeProfName) || sorted[0]
 
+  const rawRoadmap = results?.roadmaps_by_profession?.[activeProfName]?.roadmap_with_courses || results.roadmap_with_courses
+
+  // filteredRoadmap (from backend) takes priority over rawRoadmap when filters are active
+  const activeRoadmapSource = filteredRoadmap ?? rawRoadmap
+
   const roadmapAdapted = Object.fromEntries(
-    Object.entries(rawRoadmap).map(([cat, skills]) => [
+    Object.entries(activeRoadmapSource || {}).map(([cat, skills]) => [
       cat,
       Object.entries(skills).map(([skill, data]) => ({
         skill,
@@ -772,10 +1650,48 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
           reviews:     c.num_reviews ?? c.reviews ?? null,
           url:         c.course_url || null,
           description: c.description || c.short_intro || null,
+          certificate: c.certificate ?? false,
+          language:    c.language,
+          level:       c.level || c.difficulty || 'Mixed',
+          difficulty:  c.difficulty || c.level || 'Mixed',
+          price_type:  c.price_type || 'unknown',
+          price:       c.price ?? null,
         })),
       })),
     ])
   )
+
+  const allRoadmapCourses = Object.entries(roadmapAdapted).flatMap(([cat, skills]) =>
+    skills.flatMap(item => (item.courses || []).map(course => ({
+      ...normalizeCourse(course),
+      cat,
+      skill: item.skill,
+    })))
+  )
+  const courseFilterOptions = getCourseFilterOptions(allRoadmapCourses)
+  const selectedSkillExplanation = results.skill_explanations?.[activeProf?.name] || null
+
+  const orderedCategoryKeys = (categoryOrder.length ? categoryOrder : Object.keys(roadmapAdapted))
+    .filter(cat => roadmapAdapted[cat])
+  const orderedRoadmapEntries = orderedCategoryKeys.map(cat => {
+    const order = skillOrders[cat] || []
+    const skills = [...(roadmapAdapted[cat] || [])].sort((a, b) => {
+      const ai = order.indexOf(a.skill)
+      const bi = order.indexOf(b.skill)
+      if (ai === -1 && bi === -1) return 0
+      if (ai === -1) return 1
+      if (bi === -1) return -1
+      return ai - bi
+    })
+    const active = skills.filter(s => !doneSkills.has(`${cat}::${s.skill}`))
+    const completed = skills.filter(s => doneSkills.has(`${cat}::${s.skill}`))
+    return [cat, [...active, ...completed]]
+  })
+  const totalRoadmapSteps = Object.values(roadmapAdapted).reduce((sum, skills) => sum + skills.length, 0)
+  const doneRoadmapSteps = Array.from(doneSkills).filter(key => {
+    const [cat, skill] = key.split('::')
+    return roadmapAdapted[cat]?.some(item => item.skill === skill)
+  }).length
 
   const roadmapPreview = Object.entries(roadmapAdapted).map(([cat, skills]) => ({
     cat,
@@ -792,8 +1708,96 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   })
 }
   useEffect(() => {
-    setOpenCats(new Set(Object.keys(roadmapAdapted)))
-  }, [top_profession])
+    const keys = Object.keys(roadmapAdapted)
+    setOpenCats(new Set(keys))
+    setCategoryOrder(keys)
+    setSkillOrders(Object.fromEntries(keys.map(cat => [cat, roadmapAdapted[cat].map(item => item.skill)])))
+    setDoneSkills(new Set())
+    setCourseFilters(COURSE_FILTER_DEFAULTS)
+    let cancelled = false
+    const applyLocalFallback = () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem(resultStorageKey) || '{}')
+        if (Array.isArray(saved.doneSkills)) setDoneSkills(new Set(saved.doneSkills))
+        if (Array.isArray(saved.categoryOrder)) setCategoryOrder(saved.categoryOrder)
+        if (saved.skillOrders) setSkillOrders(saved.skillOrders)
+        if (saved.courseFilters) setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...saved.courseFilters })
+      } catch {}
+    }
+    if (results.session_id) {
+      getRecommendationState(results.session_id)
+        .then(state => {
+          if (cancelled) return
+          const progress = state.progress || {}
+          if (Array.isArray(progress.doneSkills)) setDoneSkills(new Set(progress.doneSkills))
+          if (Array.isArray(progress.categoryOrder) && progress.categoryOrder.length) setCategoryOrder(progress.categoryOrder)
+          if (progress.skillOrders) setSkillOrders(progress.skillOrders)
+          if (progress.selectedProfession) setSelectedProf(progress.selectedProfession)
+          if (state.filters && Object.keys(state.filters).length) {
+            setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...state.filters })
+          }
+        })
+        .catch(applyLocalFallback)
+    } else {
+      applyLocalFallback()
+    }
+    return () => { cancelled = true }
+  }, [resultStorageKey])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(resultStorageKey, JSON.stringify({
+        doneSkills: Array.from(doneSkills),
+        categoryOrder,
+        skillOrders,
+        courseFilters,
+      }))
+    } catch {}
+  }, [doneSkills, categoryOrder, skillOrders, courseFilters, resultStorageKey])
+
+  useEffect(() => {
+    if (!results.session_id) return
+    const timer = setTimeout(() => {
+      saveRoadmapProgress(results.session_id, {
+        doneSkills: Array.from(doneSkills),
+        categoryOrder,
+        skillOrders,
+        selectedProfession: activeProfName,
+      }).catch(() => {})
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [doneSkills, categoryOrder, skillOrders, activeProfName, results.session_id])
+
+  useEffect(() => {
+    if (!results.session_id) return
+    const timer = setTimeout(() => {
+      saveCourseFilterPreferences(results.session_id, courseFilters).catch(() => {})
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [courseFilters, results.session_id])
+
+  useEffect(() => {
+    getRecommendationHistory()
+      .then(data => setHistory(data.items || []))
+      .catch(() => {
+        try {
+          setHistory(JSON.parse(localStorage.getItem('career-recommendation-history') || '[]'))
+        } catch {
+          setHistory([])
+        }
+      })
+  }, [])
+
+  useEffect(() => {
+    const onKey = e => {
+      if (e.key === 'Escape') {
+        setRightOpen(false)
+        setActiveCourse(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const toggleCat = cat => setOpenCats(prev => {
     const next = new Set(prev)
@@ -801,6 +1805,7 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
     return next
   })
 
+  
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -808,9 +1813,9 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   useEffect(() => {
     if (greetedRef.current) return
     greetedRef.current = true
-    const staticMsg = lang === 'en'
-      ? `Your top match is ${top_profession}. Use the chat below to ask anything about your results, roadmap, or next steps.`
-      : `Ваша лучшая профессия — ${top_profession}. Задайте вопрос о результатах, роадмапе или следующих шагах.`
+    const staticMsg = t.results.initialChat
+      ? t.results.initialChat(profLabel(top_profession))
+      : `Your top match is ${profLabel(top_profession)}.`
     setMessages([{ role: 'assistant', content: staticMsg, streaming: false }])
   }, [])
 
@@ -819,10 +1824,22 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   /* ─── Send message ─────────────────────────────────────────── */
   const sendMessage = async (overrideMsg) => {
     const msg = (overrideMsg ?? input).trim()
-    if (!msg || chatLoading) return
+    if (!llmProvider || !msg || chatLoading) return
+    const version = aiVersionRef.current
+
+    if (!isCareerChatAllowed(msg)) {
+      setMessages(p => [
+        ...p,
+        { role: 'user', content: msg },
+        { role: 'assistant', content: t.results.assistantScope, streaming: false },
+      ])
+      setInput('')
+      return
+    }
 
     const userMsg         = { role: 'user', content: msg }
-    const historySnapshot = [...messages, userMsg]
+    // The first message is the local welcome text, not a provider conversation turn.
+    const historySnapshot = messages.slice(1).filter(m => m.content)
 
     setMessages(p => [...p, userMsg, { role: 'assistant', content: '', streaming: true }])
     setInput('')
@@ -857,27 +1874,25 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
 
       while (true) {
         const { done, value } = await reader.read()
+        if (controller.signal.aborted) return
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split(/(?=data:)/)
-        buffer = (parts[parts.length - 1]?.endsWith('\n') || parts[parts.length - 1]?.includes('[DONE]'))
-          ? ''
-          : (parts.pop() ?? '')
+        const parts = buffer.split(/\r?\n\r?\n/)
+        buffer = parts.pop() || ''
 
         for (const part of parts) {
           const text = part.replace(/^data:\s*/, '').trim()
           if (!text || text === '[DONE]') continue
 
-          try {
-            const data = JSON.parse(text)
-            if (data.type === 'thought') {
-              thoughts += data.content
-            } else if (data.content) {
-              full += data.content
-            }
-          } catch {
-            full += text
+          const data = JSON.parse(text)
+          if (data.type === 'error') {
+            throw Object.assign(new Error('AI request failed.'), { code: data.code })
+          }
+          if (data.type === 'thought') {
+            thoughts += data.content
+          } else if (data.content) {
+            full += data.content
           }
 
           setMessages(p => {
@@ -899,16 +1914,16 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
       })
 
     } catch (err) {
-      if (err.name === 'AbortError') return
+      if (err.name === 'AbortError' || version !== aiVersionRef.current) return
       setMessages(p => {
         const updated = [...p]
         updated[updated.length - 1] = {
-          role: 'assistant', content: t.errors.api, thoughts: '', streaming: false,
+          role: 'assistant', content: t.llm.errors[err.code] || t.llm.errors.provider_unavailable, thoughts: '', streaming: false,
         }
         return updated
       })
     } finally {
-      setChatLoading(false)
+      if (version === aiVersionRef.current && abortRef.current === controller) setChatLoading(false)
     }
   }
 
@@ -921,26 +1936,322 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   const handleCopyRoadmap = () => {
     const lines = []
     Object.entries(roadmapAdapted).forEach(([cat, skills]) => {
-      lines.push(cat.toUpperCase())
+      lines.push(catLabel(cat).toUpperCase())
       skills.forEach(s => {
         lines.push(`  - ${cap(s.skill)}`)
         s.courses.forEach(c => lines.push(`    ${c.title} (${c.platform})`))
       })
     })
-    copyText(`Career Roadmap: ${top_profession}\n\n` + lines.join('\n'))
+    copyText(`${t.results.roadmap}: ${profLabel(activeProfName)}\n\n` + lines.join('\n'))
     setCopied('roadmap')
     setTimeout(() => setCopied(null), 2000)
   }
 
+  const handleCopyCourse = (event, course, key) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const providerUrl = getCourseProviderUrl(course)
+    const text = providerUrl ? `${course.title} (${course.platform}): ${providerUrl}` : `${course.title} (${course.platform})`
+    copyText(text)
+    setCopiedMsg(key)
+    setTimeout(() => setCopiedMsg(null), 2000)
+  }
+
+  const resetCourseFilters = () => {
+    setCourseFilters(COURSE_FILTER_DEFAULTS)
+    setFilteredRoadmap(null)
+  }
+
+  // Convert frontend filter shape -> backend _apply_dynamic_filters shape
+  const toBackendFilters = (filters) => {
+    const out = {}
+    if (filters.price !== 'all')           out.price_types     = [filters.price]
+    if (filters.language !== 'all')        out.languages        = [filters.language]
+    if (filters.platform !== 'all')        out.platforms        = [filters.platform]
+    if (filters.level !== 'all')           out.levels           = [filters.level]
+    if (filters.certificate === 'with')    out.has_certificate  = true
+    if (filters.certificate === 'without') out.has_certificate  = false
+    return out
+  }
+
+  // Flat list of gap skills (all skill keys from rawRoadmap)
+  const gapSkillsList = useMemo(() => {
+    return rawRoadmap
+      ? Object.values(rawRoadmap).flatMap(catSkills => Object.keys(catSkills))
+      : []
+  }, [rawRoadmap])
+
+  useEffect(() => {
+    const isDefault = Object.keys(COURSE_FILTER_DEFAULTS).every(
+      k => courseFilters[k] === COURSE_FILTER_DEFAULTS[k]
+    )
+    if (isDefault) {
+      console.log("[CourseFilter] filters are default, resetting filtered roadmap");
+      setFilteredRoadmap(null)
+      return
+    }
+    if (!gapSkillsList.length) {
+      console.log("[CourseFilter] gapSkillsList is empty, skipping filter request");
+      return
+    }
+
+    let cancelled = false
+    setFilterLoading(true)
+
+    const backendFilters = toBackendFilters(courseFilters);
+    console.log("[CourseFilter] sending request to backend:", {
+      skills_gaps: gapSkillsList,
+      filters: backendFilters,
+      lang: lang
+    });
+
+    fetchFilteredCourses(
+      gapSkillsList,
+      backendFilters,
+      lang
+    )
+      .then(data => {
+        if (cancelled) {
+          console.log("[CourseFilter] request was cancelled/superseded");
+          return
+        }
+        console.log("[CourseFilter] received data from backend:", data);
+        if (data?.courses_by_skills && rawRoadmap) {
+          const merged = Object.fromEntries(
+            Object.entries(rawRoadmap).map(([cat, catSkills]) => [
+              cat,
+              Object.fromEntries(
+                Object.entries(catSkills).map(([skill, skillData]) => {
+                  const backendKey = Object.keys(data.courses_by_skills || {}).find(
+                    k => k.toLowerCase() === skill.toLowerCase()
+                  )
+                  const newCourses = backendKey ? data.courses_by_skills[backendKey] : []
+                  return [
+                    skill,
+                    { ...skillData, courses: newCourses },
+                  ]
+                })
+              ),
+            ])
+          )
+          console.log("[CourseFilter] successfully merged and set filtered roadmap:", merged);
+          setFilteredRoadmap(merged)
+        }
+      })
+      .catch(err => {
+        if (cancelled) return
+        console.warn('[CourseFilter] backend error, fallback to client-side filtering:', err)
+        setFilteredRoadmap(null)
+      })
+      .finally(() => { if (!cancelled) setFilterLoading(false) })
+
+    return () => { cancelled = true }
+  /* eslint-disable-next-line */
+  }, [courseFilters, lang, gapSkillsList, rawRoadmap])
+
   const handleShare = () => {
-    const text = `My career match: ${top_profession} ${activeProf?.final_score ? Math.round(activeProf.final_score * 100) + '%' : ''} — Build Career`
+    const text = `${t.results.selectedCareer}: ${profLabel(activeProfName)} · ${t.review.scoreTitle}: ${activeProf?.final_score != null ? formatMatchScore(activeProf.final_score) : '—'} · CareerFlow · https://careerflow.live`
     if (navigator.share) {
-      navigator.share({ title: 'Build Career', text }).catch(() => {})
+      navigator.share({ title: 'CareerFlow', text }).catch(() => {})
     } else {
       copyText(text)
       setCopied('share')
       setTimeout(() => setCopied(null), 2000)
     }
+  }
+
+  const saveCurrentResult = () => {
+    const entry = {
+      id: `${Date.now()}-${results.session_id || top_profession}`,
+      createdAt: new Date().toISOString(),
+      top_profession,
+      selectedProfession: activeProfName,
+      results,
+      progress: {
+        done: Array.from(doneSkills),
+        categoryOrder,
+        skillOrders,
+      },
+    }
+    const next = [entry, ...history.filter(item => item.results?.session_id !== results.session_id && item.id !== entry.id)].slice(0, 12)
+    setHistory(next)
+    setSavedCurrent(true)
+    try { localStorage.setItem('career-recommendation-history', JSON.stringify(next)) } catch {}
+    if (results.session_id) {
+      saveRoadmapProgress(results.session_id, {
+        doneSkills: Array.from(doneSkills),
+        categoryOrder,
+        skillOrders,
+        selectedProfession: activeProfName,
+      })
+        .then(() => getRecommendationHistory())
+        .then(data => setHistory(data.items || next))
+        .catch(() => {})
+    }
+  }
+
+  const openHistoryItem = item => {
+    setResults(item.results)
+    onHistorySelect?.({ ...item.results, _isDemo: item.results._isDemo || isDemoSession(item.results.session_id) })
+    setSelectedProf(item.selectedProfession || item.top_profession)
+    setDoneSkills(new Set(item.progress?.done || []))
+    setCategoryOrder(item.progress?.categoryOrder || [])
+    setSkillOrders(item.progress?.skillOrders || {})
+    setTab('best')
+    setSavedCurrent(true)
+    if (item.results?.session_id) {
+      getRecommendationState(item.results.session_id)
+        .then(state => {
+          if (state.filters) setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...state.filters })
+        })
+        .catch(() => {})
+    }
+  }
+
+  const clearHistory = () => {
+    if (!window.confirm(t.review.clearHistoryConfirm)) return
+    setHistory([])
+    try { localStorage.removeItem('career-recommendation-history') } catch {}
+    clearRecommendationHistory().catch(() => {})
+  }
+
+  const renderHistory = items => (
+    <div className={styles.historyList}>
+      {items.map(item => (
+        <button key={item.id} className={styles.historyItem} onClick={() => openHistoryItem(item)}>
+          <span>{profLabel(item.selectedProfession || item.top_profession)}</span>
+          {(item.results?._isDemo || isDemoSession(item.results?.session_id)) && <strong className={styles.demoBadge}>{t.review.demoLabel}</strong>}
+          <small>{t.review.historyTime}: {new Date(item.createdAt).toLocaleString(lang === 'kk' ? 'kk-KZ' : lang === 'ru' ? 'ru-RU' : 'en-GB', { dateStyle: 'medium', timeStyle: 'medium' })}</small>
+          <small>{item.results?._formData?.skills?.length ?? 0} {t.review.historySkills} · #{item.id.slice(0, 8)}</small>
+        </button>
+      ))}
+    </div>
+  )
+
+  const moveCategory = (fromCat, toCat) => {
+    if (!fromCat || !toCat || fromCat === toCat) return
+    setCategoryOrder(prev => {
+      const base = (prev.length ? prev : Object.keys(roadmapAdapted)).filter(cat => roadmapAdapted[cat])
+      const next = [...base]
+      const from = next.indexOf(fromCat)
+      const to = next.indexOf(toCat)
+      if (from < 0 || to < 0) return prev
+      const [item] = next.splice(from, 1)
+      next.splice(to, 0, item)
+      return next
+    })
+  }
+
+  const moveSkill = (cat, fromSkill, toSkill) => {
+    if (!cat || !fromSkill || !toSkill || fromSkill === toSkill) return
+    setSkillOrders(prev => {
+      const base = prev[cat] || roadmapAdapted[cat]?.map(item => item.skill) || []
+      const next = [...base]
+      const from = next.indexOf(fromSkill)
+      const to = next.indexOf(toSkill)
+      if (from < 0 || to < 0) return prev
+      const [item] = next.splice(from, 1)
+      next.splice(to, 0, item)
+      return { ...prev, [cat]: next }
+    })
+  }
+
+  const resizeChatInput = () => {
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) return
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + 'px'
+    })
+  }
+
+  const startVoiceInput = async () => {
+    if (!llmProvider || !voiceSupported) return
+    const version = aiVersionRef.current
+    if (!navigator.mediaDevices?.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
+      setVoiceNotice(t.results.voiceUnsupported)
+      return
+    }
+
+    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    if (window.isSecureContext === false && !isLocalhost) {
+      setVoiceNotice(t.results.voiceSecureContext)
+      return
+    }
+
+    try {
+      const recorder = await createWavRecorder()
+      if (version !== aiVersionRef.current) { await recorder.stop(); return }
+      voiceRecorderRef.current = recorder
+      setListening(true)
+      setVoiceNotice(t.results.voiceListening)
+    } catch (err) {
+      setListening(false)
+      if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') {
+        setVoiceNotice(t.results.voicePermission)
+      } else if (err?.name === 'NotFoundError') {
+        setVoiceNotice(t.results.voiceNoMic)
+      } else {
+        setVoiceNotice(t.results.voiceError)
+      }
+    }
+  }
+
+  const stopVoiceInput = async () => {
+    const version = aiVersionRef.current
+    const recorder = voiceRecorderRef.current
+    voiceRecorderRef.current = null
+    setListening(false)
+    if (!recorder) return
+
+    try {
+      setVoiceNotice(t.results.voiceTranscribing)
+      const audio = await recorder.stop()
+      if (version !== aiVersionRef.current) return
+      if (audio.rms < 0.004) {
+        setVoiceNotice(t.results.voiceNoSpeech)
+        return
+      }
+      const controller = new AbortController()
+      voiceAbortRef.current = controller
+      const data = await transcribeVoice(audio.blob, lang, controller.signal)
+      if (version !== aiVersionRef.current) return
+      const text = (data.text || '').trim()
+      if (!text) {
+        setVoiceNotice(t.results.voiceNoSpeech)
+        return
+      }
+      setInput(text)
+      setVoiceNotice('')
+      resizeChatInput()
+    } catch (err) {
+      if (err.name !== 'AbortError') setVoiceNotice(t.llm.errors[err.code] || t.results.voiceError)
+    }
+  }
+
+  const startChatResize = e => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = chatSize.width
+    const onMove = event => {
+      const nextWidth = Math.min(Math.max(startWidth + (startX - event.clientX), 300), Math.min(window.innerWidth - 24, 620))
+      setChatSize(size => ({ ...size, width: nextWidth }))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const speakLastAnswer = () => {
+    if (!window.speechSynthesis) return
+    const last = [...messages].reverse().find(m => m.role === 'assistant' && m.content)
+    if (!last) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(last.content)
+    utterance.lang = lang === 'kk' ? 'kk-KZ' : lang === 'ru' ? 'ru-RU' : 'en-US'
+    window.speechSynthesis.speak(utterance)
   }
 
   const handleExportPdf = () => {
@@ -953,6 +2264,10 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
     .replace(/https?:\/\/\S+/g, '')
     .replace(/\s+/g, ' ')
     .trim()
+  const esc = str => clean(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 
   const scoreLines = rows
     .filter(r => activeProf?.[r.key] != null)
@@ -962,34 +2277,69 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
         <div class="score-bar">
           <div class="score-fill" style="width:${Math.round(parseFloat(activeProf[r.key]) / r.max * 100)}%;background:${BAR_COLORS[r.key]}"></div>
         </div>
-        <span class="score-pct">${Math.round(parseFloat(activeProf[r.key]) / r.max * 100)}%</span>
+        <span class="score-pct">${Math.round(parseFloat(activeProf[r.key]) / r.max * 100)} / 100</span>
       </div>
     </div>`).join('')
 
-  const skillWord = (n) => lang === 'ru'
-    ? `${n} ${n === 1 ? 'навык' : n < 5 ? 'навыка' : 'навыков'}`
-    : `${n} ${n === 1 ? 'skill' : 'skills'}`
+  const allScoreLines = sorted.map(p => {
+    const factors = rows.map(r => `<span style="background:${BAR_COLORS[r.key]};width:${(p.contributions?.[r.key] ?? 0)}%"></span>`).join('')
+    return `<div class="all-score-row">
+      <span class="all-score-name">${esc(profLabel(p.name))}</span>
+      <div class="all-score-track"><i style="width:${pct(p.final_score)}%"></i><b>${factors}</b></div>
+      <span class="all-score-pct">${formatMatchScore(p.final_score)}</span>
+    </div>`
+  }).join('')
+
+  const scoreCircles = sorted.map(p => {
+    const score = pct(p.final_score)
+    return `<div class="score-circle">
+      <div class="circle" style="--score:${score * 3.6}deg"><span>${formatMatchPoints(p.final_score)}<small>/100</small></span></div>
+      <strong>${esc(profLabel(p.name))}</strong>
+    </div>`
+  }).join('')
+
+  const gapRows = sorted.map(p => {
+    const summary = getProfessionRoadmapSummary(results, p.name)
+    const total = sumSkillCount(summary.full)
+    const gap = sumSkillCount(summary.gap)
+    const known = Math.max(total - gap, 0)
+    const completion = total ? Math.round(known / total * 100) : 0
+    return `<div class="gap-row">
+      <span>${esc(profLabel(p.name))}</span>
+      <div class="gap-track"><i style="width:${completion}%"></i></div>
+      <b>${known}/${total}</b>
+    </div>`
+  }).join('')
+
+  const explainRows = rows
+    .filter(r => activeProf?.[r.key] != null)
+    .map(r => `<div class="explain-row">
+      <span>${esc(r.label)}</span>
+      <div><i style="width:${pct(activeProf[r.key], r.max)}%;background:${BAR_COLORS[r.key]}"></i></div>
+      <b>${pct(activeProf[r.key], r.max)} / 100</b>
+    </div>`)
+    .join('')
 
   const roadmapSections = Object.entries(roadmapAdapted).map(([cat, skills]) =>
     `<div class="rm-section">
       <div class="rm-cat">
-        <span>${cat.replace(/_/g, ' ').toUpperCase()}</span>
+        <span>${catLabel(cat).toUpperCase()}</span>
         <span class="rm-count">${skillWord(skills.length)}</span>
       </div>
       ${skills.map(s => `<div class="rm-skill">
         <span class="rm-check">□</span>
         <div class="rm-skill-body">
-          <span class="rm-skill-name">${clean(cap(s.skill))}</span>
+          <span class="rm-skill-name">${esc(cap(s.skill))}</span>
           ${s.courses.slice(0, 2).map(c => {
             const rating = c.rating && !isNaN(parseFloat(c.rating))
               ? `<span class="rm-rating">★ ${parseFloat(c.rating).toFixed(1)}</span>`
               : ''
             const reviews = c.reviews && Number(c.reviews) > 10
-              ? `<span class="rm-reviews">${Number(c.reviews).toLocaleString()} ${lang === 'ru' ? 'отзывов' : 'reviews'}</span>`
+              ? `<span class="rm-reviews">${Number(c.reviews).toLocaleString()} ${t.results.reviews}</span>`
               : ''
             return `<div class="rm-course">
-              <span class="rm-platform">${clean(c.platform)}</span>
-              <span class="rm-title">${clean(c.title)}</span>
+              <span class="rm-platform">${esc(c.platform)}</span>
+              <span class="rm-title">${esc(c.title)}</span>
               <span class="rm-meta">${rating}${reviews}</span>
             </div>`
           }).join('')}
@@ -1002,11 +2352,11 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   // Username from formData
   const userName = formData?.name || formData?.fullName || ''
   const headerSub = userName
-    ? `${lang === 'ru' ? 'для' : 'for'} ${userName} · ${new Date().toLocaleDateString()}`
+    ? `${t.results.pdfFor} ${userName} · ${new Date().toLocaleDateString()}`
     : new Date().toLocaleDateString()
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>Career Roadmap: ${top_profession}</title>
+  <title>${t.results.pdfRoadmap}: ${esc(profLabel(activeProfName))}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,Segoe UI,sans-serif;color:#1e1e1c;font-size:13px;line-height:1.5}
@@ -1018,12 +2368,42 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
     .prof-sub{font-size:12px;color:#888;margin-bottom:18px}
     .section-title{font-size:9px;font-weight:700;letter-spacing:0.1em;color:#999;text-transform:uppercase;font-family:monospace;margin-bottom:10px}
     .scores{margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid #eee}
+    .score-circles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+    .score-circle{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #eee;border-radius:8px;break-inside:avoid}
+    .circle{width:38px;height:38px;border-radius:50%;background:conic-gradient(#5b8dee var(--score),#e8edf5 0);display:grid;place-items:center;flex-shrink:0}
+    .circle span{width:29px;height:29px;border-radius:50%;background:#fff;display:grid;place-items:center;font-size:9px;font-family:monospace;font-weight:700}
+    .score-circle strong{font-size:10px;line-height:1.25}
+    .all-scores{display:flex;flex-direction:column;gap:7px;margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid #eee}
+    .all-score-row{display:grid;grid-template-columns:150px 1fr 88px;gap:10px;align-items:center}
+    .all-score-name{font-size:11px;color:#444}
+    .all-score-track{position:relative;height:8px;background:#edf1f7;border-radius:99px;overflow:hidden}
+    .all-score-track>i{position:absolute;inset:0 auto 0 0;background:#5b8dee;border-radius:99px}
+    .all-score-track>b{position:absolute;inset:0;display:flex;opacity:.55}
+    .all-score-track>b span{display:block;height:100%}
+    .all-score-pct{font-size:11px;font-family:monospace;text-align:right}
     .score-row{display:flex;align-items:center;gap:10px;margin-bottom:8px}
     .score-label{font-size:11px;color:#666;font-family:monospace;min-width:130px}
     .score-bar-wrap{flex:1;display:flex;align-items:center;gap:8px}
     .score-bar{flex:1;height:5px;background:#eee;border-radius:3px;overflow:hidden}
     .score-fill{height:100%;border-radius:3px}
-    .score-pct{font-size:11px;font-family:monospace;color:#444;min-width:34px;text-align:right}
+    .score-pct{font-size:11px;font-family:monospace;color:#444;min-width:66px;text-align:right}
+    .explain-copy{font-size:12px;color:#555;margin-bottom:10px}
+    .explain{display:flex;flex-direction:column;gap:7px;margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid #eee}
+    .explain-row{display:grid;grid-template-columns:130px 1fr 34px;gap:10px;align-items:center}
+    .explain-row span{font-size:11px;color:#555}
+    .explain-row div{height:6px;background:#eee;border-radius:99px;overflow:hidden}
+    .explain-row i{display:block;height:100%;border-radius:99px}
+    .explain-row b{font-size:11px;font-family:monospace;text-align:right}
+    .gap-summary{display:flex;flex-direction:column;gap:7px;margin-bottom:22px;padding-bottom:18px;border-bottom:1px solid #eee}
+    .gap-row{display:grid;grid-template-columns:150px 1fr 42px;gap:10px;align-items:center}
+    .gap-row span{font-size:11px}
+    .gap-row b{font-size:11px;font-family:monospace;text-align:right}
+    .gap-track{height:7px;background:#edf1f7;border-radius:99px;overflow:hidden}
+    .gap-track i{display:block;height:100%;background:#4caf82;border-radius:99px}
+    .progress-line{display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:10px;border:1px solid #eee;border-radius:8px}
+    .progress-line span{font-size:12px;font-weight:600;min-width:170px}
+    .progress-line i{flex:1;height:8px;background:#edf1f7;border-radius:99px;overflow:hidden}
+    .progress-line b{display:block;height:100%;background:#5b8dee;border-radius:99px}
     .rm-section{margin-bottom:20px;break-inside:avoid}
     .rm-cat{font-size:9px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;font-family:monospace;color:#5b8dee;background:#f0f4ff;padding:5px 10px;border-radius:4px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
     .rm-count{font-weight:400;opacity:0.7;font-size:9px}
@@ -1042,17 +2422,27 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   </style></head>
   <body>
     <div class="header">
-      <span class="header-title">Build Career — Career Roadmap</span>
-      <span class="header-sub">${headerSub}</span>
+      <span class="header-title">CareerFlow - ${t.results.pdfRoadmap}</span>
+      <span class="header-sub">${esc(headerSub)}</span>
     </div>
     <div class="body">
-      <div class="prof-name">${top_profession}</div>
-      <div class="prof-sub">${lang === 'ru' ? 'Персональный план обучения на основе вашего профиля' : 'Personalized learning roadmap based on your profile'}</div>
-      <div class="section-title">${lang === 'ru' ? 'Ваши показатели' : 'Your scores'}</div>
-      <div class="scores">${scoreLines}</div>
-      <div class="section-title">${lang === 'ru' ? 'План обучения' : 'Learning roadmap'}</div>
+      <div class="prof-name">${esc(profLabel(activeProfName))}</div>
+      <div class="prof-sub">${t.results.pdfSubtitle}</div><p>${esc(t.review.scoreNote)}</p><p>${esc(t.review.marketNote)}</p>
+      <div class="section-title">${t.results.pdfAllScores}</div>
+      <div class="score-circles">${scoreCircles}</div>
+      <div class="all-scores">${allScoreLines}</div>
+      <div class="section-title">${t.results.pdfScores}</div>
+      <div class="scores">${scoreLines}</div><p>${esc(t.review.normalization)}</p>
+      <div class="section-title">${t.results.pdfExplain}</div>
+      <div class="explain-copy">${esc(t.results.whyTop ? t.results.whyTop(profLabel(activeProf.name)) : '')}</div>
+      <div class="explain">${explainRows}</div>
+      <div class="section-title">${t.results.pdfSkillGap}</div>
+      <div class="gap-summary">${gapRows}</div>
+      <div class="section-title">${t.results.pdfProgress}</div>
+      <div class="progress-line"><span>${esc(t.results.roadmapProgress(doneRoadmapSteps, totalRoadmapSteps))}</span><i><b style="width:${totalRoadmapSteps ? Math.round(doneRoadmapSteps / totalRoadmapSteps * 100) : 0}%"></b></i></div>
+      <div class="section-title">${t.results.pdfRoadmap}</div><p>${esc(t.review.roadmapNote)}</p>
       ${roadmapSections}
-      <div class="footer">Generated by Build Career · buildcareer.app</div>
+      <div class="footer">${t.results.pdfGenerated}</div>
     </div>
   </body></html>`
 
@@ -1072,7 +2462,16 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
   const animKey = `${activeProfName}${tab}${cardKey}`
 
   return (
-    <div className={layoutClass}>
+    <div className={layoutClass} style={{ '--chat-w': `${chatSize.width}px` }}>
+      {rightOpen && <button className={styles.chatOverlay} onClick={() => setRightOpen(false)} aria-label={t.results.closeAiPanel} />}
+      {!rightOpen && (
+        <button className={styles.aiFab} onClick={() => setRightOpen(true)}>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          {t.results.openAiPanel}
+        </button>
+      )}
       {/* ─ LEFT TOGGLE ─ */}
       <button
         className={[styles.sidebarToggle, styles.sidebarToggleLeft, !leftOpen ? styles.sidebarToggleLeftClosed : ''].join(' ')}
@@ -1102,12 +2501,53 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
 
         <div className={styles.sidebarSection}>
           <div className={styles.sidebarLabel}>{t.results.sidebarLabels.recommendation}</div>
-          <div className={styles.sidebarProfession}>{activeProfName}</div>
+          <div className={styles.sidebarProfession}>{profLabel(activeProfName)}</div>
           {activeProf?.final_score != null && (
             <div style={{ marginTop: 8 }}>
               <ProgressRing value={activeProf.final_score} size={56} stroke={4} color="var(--accent)" animKey={animKey}/>
             </div>
           )}
+        </div>
+
+        <div className={styles.sidebarSection}>
+          <div className={styles.sidebarLabel} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>{t.results.yourSkillsTitle}</span>
+            <button
+              className={styles.tooltipIcon}
+              type="button"
+              title={t.results.skillsTooltip}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-3)',
+                cursor: 'help',
+                padding: '0 4px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+              </svg>
+            </button>
+          </div>
+          <div className={styles.skillsTagCloud}>
+            {(results.user_skills_ranked || []).map((s, idx) => (
+              <span
+                key={`${s.skill}-${idx}`}
+                className={styles.skillTag}
+                style={{
+                  opacity: s.status === 'General/Non-IT Token' ? 0.65 : 1
+                }}
+                title={s.status === 'General/Non-IT Token' ? "General/Non-IT Token" : `TF-IDF Weight: ${s.tfidf_weight}`}
+              >
+                {s.skill}
+                <span className={styles.skillWeightBadge}>
+                  {s.tfidf_weight.toFixed(2)}
+                </span>
+              </span>
+            ))}
+          </div>
         </div>
 
         {sorted.length > 1 && (
@@ -1119,9 +2559,9 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
                   className={`${styles.sidebarScoreRow} ${p.name === activeProfName ? styles.sidebarScoreRowActive : ''}`}
                   onClick={() => handleSelectProf(p.name)}
                 >
-                  <span className={styles.sidebarScoreKey}>{p.name}</span>
+                  <span className={styles.sidebarScoreKey}>{profLabel(p.name)}</span>
                   <span className={styles.sidebarScoreVal}>
-                    {typeof p.final_score === 'number' ? Math.round(p.final_score * 100) + '%' : '—'}
+                    {typeof p.final_score === 'number' ? formatMatchScore(p.final_score) : '—'}
                   </span>
                 </div>
               ))}
@@ -1137,7 +2577,7 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
                 <div key={cat} className={styles.roadmapPreviewItem} onClick={() => setTab('roadmap')}>
                   <span className={styles.roadmapPreviewIcon}>{CATEGORY_ICONS[cat] || '◎'}</span>
                   <div className={styles.roadmapPreviewBody}>
-                    <span className={styles.roadmapPreviewCat}>{cat.replace(/_/g, ' ')}</span>
+                    <span className={styles.roadmapPreviewCat}>{catLabel(cat)}</span>
                     <span className={styles.roadmapPreviewSkill}>{skill}{count > 1 ? ` +${count - 1}` : ''}</span>
                   </div>
                 </div>
@@ -1149,7 +2589,27 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
           </div>
         )}
 
+        <div className={styles.sidebarSection}>
+          <div className={styles.sidebarLabel}>{t.results.historyTitle}</div>
+          <p className={styles.historyNote}>{t.review.historyNote}</p>
+          {history.length === 0 ? (
+            <div className={styles.sidebarEmpty}>{t.results.noHistory}</div>
+          ) : (
+            renderHistory(history.slice(0, 4))
+          )}
+          {history.length > 0 && (
+            <button className={styles.historyClear} onClick={clearHistory}>{t.results.clearHistory}</button>
+          )}
+        </div>
+
         <div className={styles.sidebarActions}>
+          <div style={{ marginBottom: 6, fontSize: '0.72rem', color: 'var(--text-3)', lineHeight: 1.35 }}>
+            {t.review.sharedSaveWarning || t.review.historyNote}
+          </div>
+          <button className={styles.actionBtn} onClick={saveCurrentResult}>
+            <CheckIcon size={12}/>
+            {savedCurrent ? t.results.savedResult : t.results.saveResult}
+          </button>
           <button className={styles.actionBtn} onClick={handleCopyRoadmap}>
             {copied === 'roadmap' ? <CheckIcon size={12}/> : <CopyIcon size={12}/>}
             {copied === 'roadmap' ? t.results.copied : t.results.copyRoadmap}
@@ -1171,7 +2631,7 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
             }
             {pdfLoading ? '...' : t.results.downloadPdf}
           </button>
-          <button className={styles.actionBtnNew} onClick={() => { onNewAnalysis?.(); onBack?.() }}>
+          <button className={styles.actionBtnNew} onClick={() => { onNewAnalysis?.(); onRetry ? onRetry() : onBack?.() }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 5v14M5 12l7-7 7 7"/>
             </svg>
@@ -1182,6 +2642,15 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
 
       {/* ─ MAIN ─ */}
       <main className={styles.main}>
+        <header className={styles.resultsIntro}>
+          <h1>{t.results.title}</h1>
+          {(results._isDemo || isDemoSession(results.session_id)) && <span className={styles.demoBadge}>{t.review.demoLabel}</span>}
+          <p>{t.review.scoreNote}</p>
+          <div className={styles.mobileActions}>
+            <button className={styles.actionBtn} onClick={onRetry || onBack}>{t.results.newAnalysis}</button>
+            <button className={styles.actionBtn} onClick={handleExportPdf} disabled={pdfLoading}>{t.results.downloadPdf}</button>
+          </div>
+        </header>
         <div className={styles.tabsSticky}>
           <div className={styles.tabs}>
             {tabs.map(({ key, label }) => (
@@ -1196,21 +2665,28 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
         <div className={styles.tabContent} key={`${tab}${activeProfName}${cardKey}`}>
 
           {/* ─ BEST MATCH ─ */}
+          {tab === 'history' && <section className={styles.bestCard}>
+            <h2>{t.results.historyTitle}</h2><p className={styles.methodNote}>{t.review.historyNote}</p>
+            {history.length ? renderHistory(history) : <p>{t.results.noHistory}</p>}
+          </section>}
           {tab === 'best' && activeProf && (() => {
             const rows = orderedRows(ALL_SCORE_ROWS, 'score')
+            const activeRank = [...allProfessions].sort((a, b) => b.final_score - a.final_score).findIndex(p => p.name === activeProf.name) + 1
             return (
+              <div className={styles.bestStack}>
               <div className={styles.bestCard}>
                 <div className={styles.bestHeader}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                     <ProgressRing value={activeProf.final_score ?? 0} size={72} stroke={5}
-                      color="#5b8dee" animKey={animKey}/>
+                      color="#5b8dee" animKey={animKey}
+                      tooltipText={`${profLabel(activeProf.name)}\n${t.results.scoreOverview}: ${formatMatchScore(activeProf.final_score)}`}/>
                     <div>
-                      <div className={styles.bestRank}>#{1} {t.results.bestMatch}</div>
-                      <div className={styles.bestName}>{activeProf.name}</div>
+                      <div className={styles.bestRank}>#{activeRank} {activeProf.name === top_profession ? t.results.bestMatch : t.results.selectedProfession}</div>
+                      <div className={styles.bestName}>{profLabel(activeProf.name)}</div>
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                    <span className={styles.topBadge}>{t.results.bestMatch.toUpperCase()}</span>
+                    {activeProf.name === top_profession && <span className={styles.topBadge}>{t.results.bestMatch.toUpperCase()}</span>}
                     <div style={{ display: 'flex', gap: 4 }}>
                       {['bars', 'radar', 'gap'].map(m => (
                         <button key={m} onClick={() => setViewMode(m)} style={{
@@ -1221,47 +2697,62 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
                           fontSize: '0.7rem', fontFamily: 'var(--font-mono)',
                           cursor: 'pointer', transition: 'all var(--transition)',
                         }}>
-                          {m === 'bars' ? 'Bars' : m === 'radar' ? 'Radar' : (lang === 'ru' ? 'Разрыв' : 'Gap')}
+                          {t.results.chartModes?.[m] || m}
                         </button>
                       ))}
                     </div>
                   </div>
                 </div>
 
+                <ScoringFormulaHeader results={results} profession={activeProf.name} t={t} />
                 {viewMode === 'bars' && (
-                  <ProfScores p={activeProf} rows={rows} animKey={animKey} lang={lang}/>
+                  <div className={styles.chartStack}>
+                    <ProfessionBarsChart professions={sorted} rows={rows} profLabel={profLabel} t={t} animKey={animKey} onSelect={handleSelectProf}/>
+                    <div className={styles.activeMetricPanel}>
+                      <div className={styles.compareHeader}>
+                        <span>{profLabel(activeProf.name)}</span>
+                        <small>{t.results.factors}</small>
+                      </div>
+                      <ProfScores p={activeProf} rows={rows} animKey={animKey} lang={lang}/>
+                    </div>
+                  </div>
                 )}
                 {viewMode === 'radar' && (
                   <div style={{ display: 'flex', gap: 24, alignItems: 'center', padding: '16px 0 8px', flexWrap: 'wrap' }}>
-                    <RadarChart data={activeProf} animKey={animKey} lang={lang}/>
+                    <MultiProfessionRadar professions={sorted} profLabel={profLabel} rows={rows} t={t} animKey={animKey}/>
                     <MetricBars data={activeProf} rows={rows} animKey={animKey} lang={lang}/>
                   </div>
                 )}
                 {viewMode === 'gap' && (
                   <div style={{ padding: '16px 0 8px' }}>
                     <p style={{ fontSize: '0.78rem', color: 'var(--text-3)', fontFamily: 'var(--font-mono)', marginBottom: 12 }}>
-                      {lang === 'ru'
-                        ? 'Синий — ваши навыки, зеленый — эталон профессии'
-                        : 'Blue — your skills, green — profession ideal'}
+                      {t.results.gapLegend}
                     </p>
                     <div style={{
                         display: 'flex', gap: 24, alignItems: 'center',
                         padding: '16px 0 8px', flexWrap: 'wrap',
                       }}>
-                        <SkillGapRadar results={results} formData={results._formData} animKey={animKey} lang={lang} />
+                        <SkillGapComparison professions={sorted} results={results} profLabel={profLabel} t={t} onSelect={handleSelectProf}/>
+                        <SkillGapRadar results={results} formData={results._formData} profession={activeProf.name} animKey={animKey} lang={lang} />
                         <MetricBars data={activeProf} rows={rows} animKey={animKey} lang={lang} />
                       </div>
                   </div>
                 )}
 
-                {activeProf.vacancies_per_week && (
+                {activeProf.vacancies_per_week != null && (
                   <div className={styles.demandRow}>
                     <div className={styles.demandItem}>
-                      <VacancyTrend value={activeProf.vacancies_per_week}/>
                       {activeProf.vacancies_per_week.toLocaleString()} {t.results.vacanciesWeek}
                     </div>
                   </div>
                 )}
+              </div>
+              <ExplainabilityPanel
+                profession={activeProf}
+                profLabel={profLabel}
+                t={t}
+                skillExplanation={selectedSkillExplanation}
+              />
               </div>
             )
           })()}
@@ -1278,28 +2769,33 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
                   </button>
                 ))}
               </div>
+              <ScoreCircleGrid professions={sorted} rows={ALL_SCORE_ROWS} profLabel={profLabel} t={t} onSelect={handleSelectProf}/>
+              <div className={styles.allCharts}>
+                <ProfessionBarsChart professions={sorted} rows={orderedRows(ALL_SCORE_ROWS, sortBy)} profLabel={profLabel} t={t} animKey={`${sortBy}${cardKey}`} onSelect={handleSelectProf}/>
+                <SkillGapComparison professions={sorted} results={results} profLabel={profLabel} t={t} onSelect={handleSelectProf}/>
+              </div>
               <div className={styles.allGrid}>
                 {sorted.map((p, i) => {
                   const rows = orderedRows(ALL_SCORE_ROWS, sortBy)
                   const aKey = `${p.name}${sortBy}`
                   return (
-                    <div key={p.name} className={`${styles.profCard} ${i === 0 ? styles.profCardTop : ''}`}>
+                    <div key={p.name} className={`${styles.profCard} ${p.name === top_profession ? styles.profCardTop : ''}`}>
                       <div className={styles.profHeader}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <ProgressRing value={p.final_score ?? 0} size={40} stroke={3}
-                            color={BAR_COLORS.skill_match} animKey={aKey}/>
+                            color={BAR_COLORS.skill_match} animKey={aKey}
+                            tooltipText={`${profLabel(p.name)}\n${t.results.scoreOverview}: ${formatMatchScore(p.final_score)}`}/>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span className={styles.profRank}>#{i+1}</span>
-                            <span className={styles.profName}>{p.name}</span>
-                            {i === 0 && <span className={styles.topBadge}>{t.results.bestMatch.toUpperCase()}</span>}
+                            <span className={styles.profName}>{profLabel(p.name)}</span>
+                            {p.name === top_profession && <span className={styles.topBadge}>{t.results.bestMatch.toUpperCase()}</span>}
                           </div>
                         </div>
                       </div>
                       <ProfScores p={p} rows={rows} animKey={aKey} lang={lang}/>
-                      {p.vacancies_per_week && (
+                      {p.vacancies_per_week != null && (
                         <div className={styles.demandRow}>
                           <div className={styles.demandItem}>
-                            <VacancyTrend value={p.vacancies_per_week}/>
                             {p.vacancies_per_week.toLocaleString()} {t.results.vacanciesWeek}
                           </div>
                         </div>
@@ -1315,10 +2811,28 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
           {tab === 'roadmap' && (
   <>
     <p className={styles.roadmapHint}>
-      {t.results.skillsToLearn} <strong>{top_profession}</strong>
+      {t.results.skillsToLearn} <strong>{profLabel(activeProfName)}</strong>
     </p>
+    <div className={styles.roadmapProgressPanel}>
+      <span>{t.results.roadmapProgress(doneRoadmapSteps, totalRoadmapSteps)}</span>
+      <div className={styles.roadmapProgressTrack}>
+        <i style={{ width: `${totalRoadmapSteps ? Math.round(doneRoadmapSteps / totalRoadmapSteps * 100) : 0}%` }}/>
+      </div>
+    </div>
+    <p className={styles.methodNote}>{t.review.roadmapMethod}</p>
+    <p className={styles.methodNote}>{t.review.roadmapNote}</p>
+    <p className={styles.dragHint}>{t.results.dragHint}</p>
+    <CourseFilters
+      filters={courseFilters}
+      options={courseFilterOptions}
+      onChange={setCourseFilters}
+      onReset={resetCourseFilters}
+      loading={filterLoading}
+      t={t}
+    />
+    <SkillDependencyTree roadmap={roadmapAdapted} doneSkills={doneSkills} formSkills={results._formData?.skills} t={t}/>
     <div className={styles.roadmap}>
-      {Object.entries(roadmapAdapted).map(([cat, skills]) => {
+      {orderedRoadmapEntries.map(([cat, skills]) => {
         const isOpen = openCats.has(cat)
 
         // Sorting: uncompleted at top, completed at bottom
@@ -1329,13 +2843,25 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
         })
 
         const doneCount = skills.filter(s => doneSkills.has(`${cat}::${s.skill}`)).length
+        const firstCompletedIndex = sorted.findIndex(s => doneSkills.has(`${cat}::${s.skill}`))
 
         return (
-          <div key={cat} className={styles.roadmapCat}>
+          <div
+            key={cat}
+            className={styles.roadmapCat}
+            draggable
+            onDragStart={() => setDragItem({ type: 'category', cat })}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => {
+              e.preventDefault()
+              if (dragItem?.type === 'category') moveCategory(dragItem.cat, cat)
+              setDragItem(null)
+            }}
+          >
             <button className={styles.catHeader} onClick={() => toggleCat(cat)}>
               <span className={styles.catIcon}>{CATEGORY_ICONS[cat] || '◎'}</span>
-              <span className={styles.catName}>{cat.replace(/_/g, ' ').toUpperCase()}</span>
-              <span className={styles.catCount}>{skills.length} skills</span>
+              <span className={styles.catName}>{catLabel(cat).toUpperCase()}</span>
+              <span className={styles.catCount}>{skillWord(skills.length)}</span>
               {/* progress inside category */}
               {doneCount > 0 && (
                 <span style={{
@@ -1354,13 +2880,36 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
               <div className={styles.skillList}>
                 {sorted.map((s, i) => {
                   const isDone = doneSkills.has(`${cat}::${s.skill}`)
+                  const visibleCourses = filterCourses(s.courses || [], courseFilters);
                   return (
-                    <div key={i} className={styles.skillItem}
-                      style={{ opacity: isDone ? 0.45 : 1, transition: 'opacity 0.2s ease' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <div
+                      key={s.skill}
+                      className={styles.skillItemWrap}
+                      draggable
+                      onDragStart={e => {
+                        e.stopPropagation()
+                        setDragItem({ type: 'skill', cat, skill: s.skill })
+                      }}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        if (dragItem?.type === 'skill' && dragItem.cat === cat) moveSkill(cat, dragItem.skill, s.skill)
+                        setDragItem(null)
+                      }}
+                    >
+                    {firstCompletedIndex === i && (
+                      <div className={styles.completedDivider}>{t.results.completedSteps}</div>
+                    )}
+                    <div className={styles.skillItem}
+                      style={{ opacity: isDone ? 0.55 : 1, transition: 'opacity 0.2s ease' }}>
+                      <div className={styles.skillTopRow}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         {/* Clickable checkbox */}
                         <button
                           onClick={() => toggleSkill(cat, s.skill)}
+                          aria-label={cap(s.skill)}
+                          aria-pressed={isDone}
                           style={{
                             width: 18, height: 18, borderRadius: 4,
                             border: `1.5px solid ${isDone ? '#4caf82' : 'var(--border)'}`,
@@ -1386,39 +2935,27 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
                         }}>
                           {cap(s.skill)}
                         </span>
+                        </div>
                       </div>
 
                       {!isDone && s.courses.length > 0 && (
                         <div className={styles.courses}>
-                          {s.courses.map((c, j) => (
-                            <div key={j} className={styles.courseWrap}>
-                              <div className={styles.course} style={{ cursor: 'pointer' }}
-                                onClick={() => setActiveCourse(c)}>
-                                <span className={styles.coursePlatform}>{c.platform}</span>
-                                <span className={styles.courseTitle}>{c.title}</span>
-                                <span className={styles.courseMeta}>
-                                  {c.rating && <span className={styles.courseRating}>★ {c.rating}</span>}
-                                  {c.reviews != null && (
-                                    <span className={styles.courseReviews}>
-                                      {Number(c.reviews).toLocaleString()} reviews
-                                    </span>
-                                  )}
-                                </span>
-                              </div>
-                              <button className={styles.courseCopyBtn}
-                                onClick={e => {
-                                  e.preventDefault()
-                                  const text = c.url ? `${c.title} (${c.platform}): ${c.url}` : `${c.title} (${c.platform})`
-                                  copyText(text)
-                                  setCopiedMsg(`course-${j}-${i}`)
-                                  setTimeout(() => setCopiedMsg(null), 2000)
-                                }}>
-                                {copiedMsg === `course-${j}-${i}` ? <CheckIcon/> : <CopyIcon/>}
-                              </button>
-                            </div>
+                          {visibleCourses.length === 0 && (
+                            <div className={styles.courseFallback}>{t.results.courseEmptyState || t.results.noCourses}</div>
+                          )}
+                          {visibleCourses.map((c, j) => (
+                            <CourseCard
+                              key={`${c.title}-${j}`}
+                              course={c}
+                              t={t}
+                              onOpen={setActiveCourse}
+                              copied={copiedMsg === `course-${j}-${i}`}
+                              onCopy={e => handleCopyCourse(e, c, `course-${j}-${i}`)}
+                            />
                           ))}
                         </div>
                       )}
+                    </div>
                     </div>
                   )
                 })}
@@ -1434,49 +2971,57 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
       </main>
 
       {/* ─ RIGHT CHAT ─ */}
-      <aside className={styles.chatSidebar}>
+      {rightOpen && (
+      <aside className={styles.chatSidebar} style={{ width: chatSize.width }}>
+        <span className={styles.chatResizeHandle} onMouseDown={startChatResize}/>
         <div className={styles.chatHeader}>
           <div className={styles.chatDot}/>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
           <span className={styles.chatTitle}>{t.results.chatTitle}</span>
+          <button className={styles.chatCloseBtn} onClick={() => setRightOpen(false)} title={t.results.closeAiPanel}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M18 6L6 18M6 6l12 12"/>
+            </svg>
+          </button>
         </div>
 
+        <LLMSettings />
         <div className={styles.chatMessages}>
-          {messages.length === 0 && (
+          {!llmProvider && <div className={styles.chatEmpty} role="status">{t.llm.noKey}</div>}
+          {llmProvider && messages.length === 0 && (
             <div className={styles.chatEmpty}>
               <span className={styles.chatEmptyIcon}>
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
               </span>
-              <span>Ask anything about your results</span>
+              <span>{t.results.askAnything}</span>
             </div>
           )}
-          {messages.map((m, i) => (
+          {llmProvider && messages.map((m, i) => (
             <div key={i} className={`${styles.msg} ${m.role === 'user' ? styles.msgUser : styles.msgAi}`}>
               <div className={styles.msgOuter}>
                 {m.thoughts && !m.streaming && (
                   <details className={styles.thoughtBlock}>
-                    <summary>{lang === 'ru' ? 'Размышления' : 'Thoughts'}</summary>
+                    <summary>{t.results.thoughts}</summary>
                     <div className={styles.thoughtContent}>{m.thoughts}</div>
                   </details>
                 )}
                 <div className={`${styles.msgBubble} ${m.streaming ? styles.msgStreaming : ''}`}>
                   {m.content}
                   {m.streaming && !m.content && (
-                    <span style={{
-                      display: 'inline-block', width: 2, height: '0.9em',
-                      background: 'var(--accent)', marginLeft: 2,
-                      verticalAlign: 'text-bottom', animation: 'blink 1s step-end infinite',
-                    }}/>
+                    <span className={styles.thinkingStatus}>
+                      {t.results.analyzing}
+                      <span className={styles.thinkingDots}><i/><i/><i/></span>
+                    </span>
                   )}
                 </div>
                 {!m.streaming && m.content && (
                   <button
                     className={`${styles.msgCopyBtn} ${m.role === 'user' ? styles.msgCopyBtnUser : styles.msgCopyBtnAi}`}
-                    title="Copy"
+                    title={t.results.copy}
                     onClick={() => {
                       copyText(m.content)
                       setCopiedMsg(`msg-${i}`)
@@ -1491,7 +3036,7 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
           ))}
 
           {/* Suggestions */}
-          {messages.length === 1 && messages[0]?.role === 'assistant' && !messages[0]?.streaming && (
+          {llmProvider && messages.length === 1 && messages[0]?.role === 'assistant' && !messages[0]?.streaming && (
             <div className={styles.chatSuggestions}>
               {t.results.suggestions.map(q => (
                 <button key={q} className={styles.suggestion} onClick={() => sendMessage(q)}>{q}</button>
@@ -1500,7 +3045,7 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
           )}
 
           {/* Typing */}
-          {chatLoading && messages[messages.length - 1]?.content === '' && (
+          {chatLoading && messages[messages.length - 1]?.content === '' && !messages[messages.length - 1]?.streaming && (
             <div className={`${styles.msg} ${styles.msgAi}`}>
               <div className={styles.msgBubble}>
                 <div className={styles.typing}><span/><span/><span/></div>
@@ -1512,13 +3057,37 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
 
         <div className={styles.chatBottom}>
           <div className={styles.chatToolbar}>
-            <DeepModeBtn active={deepMode} onClick={() => setDeepMode(v => !v)} lang={lang}/>
+            <DeepModeBtn active={deepMode} disabled={!llmProvider} onClick={() => setDeepMode(v => !v)} lang={lang} t={t}/>
+            <button
+              className={`${styles.voiceBtn} ${listening ? styles.voiceBtnActive : ''}`}
+              onClick={listening ? stopVoiceInput : startVoiceInput}
+              disabled={!llmProvider || !voiceSupported}
+              aria-label={t.results.voiceRecord}
+              title={listening ? t.results.voiceStop : t.results.voiceRecord}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </button>
+            <button className={styles.voiceBtn} onClick={speakLastAnswer} title={t.results.voicePlay}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              </svg>
+            </button>
           </div>
+          <div className={styles.chatScope}>{voiceNotice || (llmProvider && !voiceSupported ? t.llm.voiceGemini : t.results.assistantScope)}</div>
           <div className={styles.chatInput}>
             <textarea
               ref={textareaRef}
               className={styles.chatInputField}
               value={input}
+              disabled={!llmProvider}
+              aria-label={t.results.chatPlaceholder}
               rows={1}
               onChange={e => {
                 setInput(e.target.value)
@@ -1530,7 +3099,7 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
               }}
               placeholder={t.results.chatPlaceholder}
             />
-            <button className={styles.chatSend} onClick={() => sendMessage()} disabled={chatLoading || !input.trim()}>
+            <button className={styles.chatSend} aria-label={t.results.chatSend} onClick={() => sendMessage()} disabled={!llmProvider || chatLoading || !input.trim()}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
               </svg>
@@ -1538,10 +3107,11 @@ export default function Results({ results, formData, onBack, onNewAnalysis }) {
           </div>
         </div>
       </aside>
+      )}
 
       {/* ─ COURSE MODAL ─ */}
       {activeCourse && (
-        <CourseModal course={activeCourse} onClose={() => setActiveCourse(null)}/>
+        <CourseModal course={activeCourse} onClose={() => setActiveCourse(null)} t={t}/>
       )}
 
       <style>{`@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }`}</style>

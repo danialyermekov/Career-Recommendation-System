@@ -8,9 +8,13 @@
     "react-scripts": "5.0.1",
     "framer-motion": "^10.16.4"
   },
+  "devDependencies": {
+    "typescript": "4.9.5"
+  },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build"
+    "build": "react-scripts build",
+    "test": "react-scripts test --watchAll=false"
   },
   "browserslist": {
     "production": [">0.2%", "not dead", "not op_mini all"],

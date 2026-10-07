@@ -17,6 +17,72 @@
 .sectionLabel { font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-family: var(--font-mono); }
 .hint { font-size: .82rem; color: var(--text-3); margin-top: -4px; }
 
+/* ─── Resume parser ─────────────────────────────────────────── */
+.resumeBox {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.resumeInput {
+  display: none;
+}
+
+.resumeUploadBtn {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--panel-strong);
+  color: var(--text-2);
+  font-size: .86rem;
+  font-weight: 650;
+  transition: all var(--transition);
+}
+
+.resumeUploadBtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-light);
+}
+
+.resumeParsed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.resumeParsedHeader,
+.resumeRole {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-3);
+  font-size: .75rem;
+  font-family: var(--font-mono);
+}
+
+.resumeParsedHeader button {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+}
+
+.resumeRole strong {
+  color: var(--text);
+  font-size: .78rem;
+  text-align: right;
+}
+
 /* ─── Tags input wrapper ─────────────────────────────────────── */
 .tagsInputWrap { position: relative; }
 
@@ -157,7 +223,8 @@
   user-select: none;
 }
 .checkItem:hover { border-color: var(--border-hover); background: var(--bg-tertiary); }
-.checkbox { display: none; }
+.checkbox { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.checkbox:focus-visible + .checkBox { outline: 2px solid var(--accent); outline-offset: 3px; }
 .checkBox {
   width: 18px; height: 18px;
   border-radius: 4px;
@@ -206,17 +273,17 @@
 /* ─── 3-column page layout ───────────────────────────────────── */
 .pageLayout {
   display: grid;
-  grid-template-columns: var(--left-w, 260px) 1fr var(--right-w, 320px);
+  grid-template-columns: var(--left-w, 260px) minmax(0, 1fr) var(--right-w, 320px);
   min-height: 100dvh;
-  padding-top: 56px;
+  padding-top: 86px;
 }
 
 /* LEFT sidebar */
 .formSidebar {
   border-right: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  position: sticky; top: 56px;
-  height: calc(100dvh - 56px);
+  background: var(--panel);
+  position: sticky; top: 86px;
+  height: calc(100dvh - 86px);
   overflow-y: auto;
   display: flex; flex-direction: column;
   transition: width 0.22s cubic-bezier(0.16,1,0.3,1), opacity 0.18s ease;
@@ -253,10 +320,10 @@
 /* RIGHT chat panel */
 .formChat {
   border-left: 1px solid var(--border);
-  background: var(--bg-tertiary);
+  background: var(--panel);
   display: flex; flex-direction: column;
-  position: sticky; top: 56px;
-  height: calc(100dvh - 56px);
+  position: sticky; top: 86px;
+  height: calc(100dvh - 86px);
   overflow-y: auto;
   transition: width 0.22s cubic-bezier(0.16,1,0.3,1), opacity 0.18s ease;
   width: 320px; flex-shrink: 0;
@@ -289,7 +356,7 @@
 .pageLayoutRightClosed .formChat    { width: 0; overflow: hidden; border: none; padding: 0; opacity: 0; }
 
 /* Toggle buttons */
-.sidebarToggle { position: fixed; top: 68px; width: 22px; height: 22px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-2); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 50; transition: all 0.18s ease; }
+.sidebarToggle { position: fixed; top: 96px; width: 22px; height: 22px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-2); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 50; transition: all 0.18s ease; }
 .sidebarToggle:hover { background: var(--bg-tertiary); color: var(--text); border-color: var(--border-hover); }
 .sidebarToggleLeft { left: 238px; transition: left 0.22s cubic-bezier(0.16,1,0.3,1); }
 .sidebarToggleLeftClosed { left: 8px; }
@@ -300,7 +367,7 @@
 @media (max-width: 900px) {
   .pageLayout {
     display: block;
-    padding-top: 56px;
+    padding-top: 74px;
   }
 
   .formSidebar,
@@ -345,4 +412,134 @@
     bottom: 12px;
     z-index: 20;
   }
+}
+
+/* Premium visual layer */
+.wrap {
+  max-width: 780px;
+  padding-top: 34px;
+  padding-bottom: 72px;
+}
+
+.header {
+  position: relative;
+  padding: 26px 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  backdrop-filter: blur(20px);
+}
+
+.title {
+  font-size: clamp(1.7rem, 3vw, 2.35rem);
+}
+
+.form {
+  margin-top: 20px;
+  gap: 18px;
+}
+
+.section {
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  backdrop-filter: blur(18px);
+}
+
+.section:last-of-type {
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionLabel {
+  color: var(--accent);
+}
+
+.tagsInput,
+.input,
+.select,
+.checkItem,
+.softItem,
+.acDropdown,
+.tipBox,
+.chatBubble {
+  background: var(--panel-strong);
+  backdrop-filter: blur(14px);
+}
+
+.tagsInput,
+.input,
+.select {
+  min-height: 44px;
+}
+
+.checkItem:hover,
+.softItem:hover,
+.course:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.submit {
+  min-height: 52px;
+  box-shadow: var(--shadow-sm);
+}
+
+.submit:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: var(--shadow-md);
+}
+
+.formSidebar,
+.formChat {
+  backdrop-filter: blur(20px);
+}
+
+.formSidebarInner {
+  padding-top: 28px;
+}
+
+.sidebarBrandDot {
+  box-shadow: none;
+}
+
+.progressFill {
+  box-shadow: none;
+}
+
+@media (max-width: 900px) {
+  .wrap {
+    max-width: 100%;
+    padding: 72px 16px 40px;
+  }
+
+  .header {
+    padding: 20px;
+  }
+
+  .section {
+    padding: 18px;
+  }
+}
+
+.readiness { font-weight: 650; color: var(--text); font-size: .9rem; }
+.requirementNote { color: var(--text-2); font-size: .86rem; margin-top: 14px; line-height: 1.65; }
+.demoActions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
+.demoButton, .resetButton {
+  min-height: 44px; padding: 10px 16px; border: 1px solid var(--border-hover);
+  border-radius: var(--radius-md); font-size: .9rem; font-weight: 650;
+}
+.demoButton { background: var(--accent); color: var(--accent-contrast); }
+.resetButton { background: var(--panel-strong); color: var(--text); }
+.demoNotice { border-left: 3px solid var(--accent); padding: 12px 16px; margin-top: 18px; background: var(--accent-light); }
+.demoNotice p { font-size: .9rem; color: var(--text-2); margin: 8px 0 14px; }
+.hint { line-height: 1.65; font-size: .86rem; }
+.formMain { min-width: 0; }
+.sidebarLabel { font-size: .75rem; }
+
+@media (min-width: 901px) and (max-width: 1200px) {
+  .pageLayout { --right-w: 0px; }
+  .formChat, .sidebarToggleRight { display: none; }
 }

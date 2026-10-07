@@ -44,7 +44,7 @@ CLEAR_PROFILES = [
                         "deep learning", "pytorch", "tensorflow", "mlops"],
             "field_of_study": "Data Science",
             "gpa": 3.8,
-            "python": 1, "java": 0, "c_cpp": 0, "sql": 1,
+            "python": 1, "java": 0, "c_cpp": 0, "sql": 0,
             "machine_learning": 1, "data_analysis": 1, "cloud_computing": 0,
             "cybersecurity": 0, "web_development": 0, "devops": 0,
             "networking": 0, "communication": 1, "leadership": 0,
@@ -57,9 +57,9 @@ CLEAR_PROFILES = [
         {
             "skills": ["sql", "excel", "power bi", "tableau", "statistics",
                         "data visualization", "google analytics"],
-            "field_of_study": "Business Analytics",
+            "field_of_study": "Data Science",
             "gpa": 3.5,
-            "python": 0, "java": 0, "c_cpp": 0, "sql": 1,
+            "python": 1, "java": 0, "c_cpp": 0, "sql": 1,
             "machine_learning": 0, "data_analysis": 1, "cloud_computing": 0,
             "cybersecurity": 0, "web_development": 0, "devops": 0,
             "networking": 0, "communication": 1, "leadership": 1,
@@ -87,7 +87,7 @@ CLEAR_PROFILES = [
         {
             "skills": ["requirements gathering", "bpmn", "jira", "confluence",
                         "sql", "excel", "uml", "stakeholder management"],
-            "field_of_study": "Information Systems",
+            "field_of_study": "Data Science",
             "gpa": 3.3,
             "python": 0, "java": 0, "c_cpp": 0, "sql": 1,
             "machine_learning": 0, "data_analysis": 1, "cloud_computing": 0,
@@ -117,7 +117,7 @@ CLEAR_PROFILES = [
         {
             "skills": ["python", "statistics", "r", "hypothesis testing",
                         "feature engineering", "xgboost", "research", "bayesian"],
-            "field_of_study": "Applied Mathematics",
+            "field_of_study": "AI",
             "gpa": 3.9,
             "python": 1, "java": 0, "c_cpp": 0, "sql": 1,
             "machine_learning": 1, "data_analysis": 1, "cloud_computing": 0,

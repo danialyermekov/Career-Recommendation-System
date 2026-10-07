@@ -35,3 +35,16 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage]
     message: str
     deep: bool = False
+    lang: str = 'en'
+
+
+class RoadmapProgressRequest(BaseModel):
+    doneSkills: list[str] = []
+    categoryOrder: list[str] = []
+    skillOrders: dict[str, list[str]] = {}
+    selectedProfession: Optional[str] = None
+
+
+class CourseFilterPreferencesRequest(BaseModel):
+    filters: dict = {}
+    user_id: str = 'demo'

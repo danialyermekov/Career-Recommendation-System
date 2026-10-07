@@ -1,0 +1,8 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        REACT_APP_API_URL: ""
+    ports:
+      - "8000:8000"

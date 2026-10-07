@@ -1,8 +1,18 @@
-# Career Path Prediction (Career Prediction)
+# CareerFlow Profile Classifier
 
-This project is a part of a graduation thesis dedicated to developing an intelligent career path prediction system. Based on a user's profile (education, current skills, work experience, and other characteristics), the classification model predicts the most probable career direction or a specific job role.
+This research module is part of the CareerFlow graduation project. The serving classifier uses field of study, GPA, technical indicators, soft-skill ratings and derived features to produce profile-fit signals for career ranking. Training labels come from synthetic profile data; they do not represent observed career success.
 
 The problem addressed by this project is highly relevant to the **HR Tech** industry, career consulting, and educational platforms, helping users build optimal vectors for professional development.
+
+---
+
+## Dataset provenance and preparation
+
+Source: hafsaatm’s [Career Path Recommendation](https://www.kaggle.com/datasets/hafsaatm/career-path-recommendation) on Kaggle. The upstream description explicitly calls this synthetic educational/research data. Its education/background fields, technical skills, soft skills and three recommended-job labels correspond to `data/raw/career_multilabel_dataset.csv` (2,000 rows). The current training pipeline uses `recommended_job_1` as its target; it does not train a top-three multi-label serving model.
+
+`notebooks/data_preparation.ipynb` maps and filters profession labels, then calls `src/synt_balancing.py::balance_dataset` with the seven supported classes and `target_count=300`. That helper generates rows for underrepresented classes, including absent Data Analyst and Data Engineer classes, using local profession-specific rules. The derived file is `data/balanced/career_multilabel_dataset_balanced.csv`. This step is part of training reproducibility, not evidence of observed career outcomes. Serving features exclude age and gender even though those columns exist in the raw dataset.
+
+License check on 2026-10-07: the [Kaggle metadata endpoint](https://www.kaggle.com/api/v1/datasets/view/hafsaatm/career-path-recommendation) reports `licenseName: "Unknown"`. No explicit dataset reuse license was verified. The original import revision/checksum was not recorded. See the root [data provenance table](../../README.md#data-and-reviewer-workflow) for the separate job-market source.
 
 ---
 
@@ -32,7 +42,7 @@ predict_career/
 ├── results/            # Final metrics (classification_report.csv) and training logs
 ├── src/                # Supporting Python modules
 │   ├── report.py       # Custom report generation (classification_report_custom)
-│   └── synt_balancing.py # Synthetic balancing functions (SMOTE/ADASYN)
+│   └── synt_balancing.py # Rule-based synthetic profile balancing
 ├── pyproject.toml      # Project configuration and metadata
 └── uv.lock             # uv lockfile for exact dependency reproduction
 ```

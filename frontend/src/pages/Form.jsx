@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useApp } from '../context/AppContext'
+import { parseResume } from '../utils/api'
 import styles from './Form.module.css'
+import { DEMO_PROFILE } from '../utils/demoProfile'
 
 const TECH_SKILLS = [
   { key: 'python',           label: 'Python'           },
@@ -18,6 +20,15 @@ const TECH_SKILLS = [
 
 const SOFT_KEYS = ['communication', 'leadership', 'problem_solving', 'teamwork', 'adaptability']
 const FIELDS    = ['Data Science', 'Computer Science', 'Software Engineering', 'AI', 'Cybersecurity']
+const PROFESSION_KEYS = [
+  'Data Analyst',
+  'Data Engineer',
+  'Data Scientist',
+  'Machine Learning Engineer',
+  'Business Analyst',
+  'Cloud Engineer',
+  'Software Engineer',
+]
 
 // Autocomplete suggestions list - add as many as you want here
 const SKILL_SUGGESTIONS = [
@@ -29,8 +40,21 @@ const SKILL_SUGGESTIONS = [
   'DevOps', 'CI/CD', 'Git', 'Linux', 'Bash', 'Networking', 'Cybersecurity',
   'Web Development', 'React', 'Vue', 'Angular', 'FastAPI', 'Django', 'Flask', 'Node.js',
   'Spark', 'Hadoop', 'Kafka', 'Airflow', 'dbt', 'Tableau', 'Power BI', 'Excel',
-  'R', 'MATLAB', 'Scala', 'Julia',
+  'R', 'MATLAB', 'Scala', 'Julia', 'C++', 'C#', 'Go', 'Rust', 'Kotlin', 'Swift',
   'API Design', 'REST', 'GraphQL', 'Microservices', 'System Design', 'Agile', 'Scrum',
+]
+
+const ROLE_PATTERNS = [
+  'Data Scientist',
+  'Data Analyst',
+  'Data Engineer',
+  'Business Analyst',
+  'Machine Learning Engineer',
+  'Software Engineer',
+  'Cloud Engineer',
+  'Frontend Developer',
+  'Backend Developer',
+  'Full Stack Developer',
 ]
 
 const DEFAULT = {
@@ -48,9 +72,10 @@ const ChevronIcon = ({ dir = 'left' }) => (
   </svg>
 )
 
-export default function Form({ onSubmit, loading }) {
+export default function Form({ onSubmit, loading, initialDemo = false }) {
   const { t, lang } = useApp()
-  const [form,       setForm]       = useState(DEFAULT)
+  const [form,       setForm]       = useState(initialDemo ? { ...DEMO_PROFILE, skills: [...DEMO_PROFILE.skills] } : DEFAULT)
+  const [isDemo, setIsDemo] = useState(initialDemo)
   const [skillInput, setSkillInput] = useState('')
   const [errors,     setErrors]     = useState({})
   const [tipIdx,     setTipIdx]     = useState(0)
@@ -58,10 +83,14 @@ export default function Form({ onSubmit, loading }) {
   const [rightOpen,  setRightOpen]  = useState(true)
   const [acVisible,  setAcVisible]  = useState(false)  // autocomplete dropdown
   const [acIndex,    setAcIndex]    = useState(-1)      // selected item in dropdown
+  const [parsedResume, setParsedResume] = useState({ skills: [], role: '', fileName: '' })
+  const [resumeNotice, setResumeNotice] = useState('')
+  const [resumeLoading, setResumeLoading] = useState(false)
 
   const tipTimer   = useRef(null)
   const acRef      = useRef(null)
   const inputRef   = useRef(null)
+  const resumeRef  = useRef(null)
 
   const tips = t.form.tips
 
@@ -100,6 +129,18 @@ export default function Form({ onSubmit, loading }) {
     setAcVisible(false)
     setAcIndex(-1)
     inputRef.current?.focus()
+  }
+
+  const mergeSkills = (skills) => {
+    const current = new Set(form.skills.map(x => x.toLowerCase()))
+    const next = [...form.skills]
+    skills.forEach(skill => {
+      if (!current.has(skill.toLowerCase())) {
+        current.add(skill.toLowerCase())
+        next.push(skill)
+      }
+    })
+    set('skills', next)
   }
 
   const removeSkill = (s) => set('skills', form.skills.filter(x => x !== s))
@@ -144,7 +185,7 @@ export default function Form({ onSubmit, loading }) {
 
   const validate = () => {
     const e = {}
-    if (!form.gpa || form.gpa < 0 || form.gpa > 4) e.gpa = t.errors.gpa
+    if (!form.gpa || Number(form.gpa) < 2 || Number(form.gpa) > 4) e.gpa = t.errors.gpa
     setErrors(e)
     return !Object.keys(e).length
   }
@@ -152,15 +193,105 @@ export default function Form({ onSubmit, loading }) {
   const handleSubmit = (e) => {
     e.preventDefault()
     if (!validate()) return
-    onSubmit({ ...form, gpa: Number(form.gpa), lang })
+    onSubmit({ ...form, gpa: Number(form.gpa), lang }, isDemo)
+  }
+
+  const parseResumeText = (text) => {
+    const normalized = text.replace(/\s+/g, ' ')
+    const safeRules = [
+      ['Python', /\bpython\b/i],
+      ['JavaScript', /\bjavascript\b|\bjs\b/i],
+      ['TypeScript', /\btypescript\b|\bts\b/i],
+      ['Java', /\bjava\b/i],
+      ['C++', /\bc\+\+\b|\bcpp\b/i],
+      ['C#', /\bc#\b|\bcsharp\b/i],
+      ['Go', /\bgolang\b|\bgo\s+(developer|engineer|language|programming)\b/i],
+      ['R', /\br\s+(programming|language)\b|\brstudio\b|\btidyverse\b|\bggplot2\b|\bdplyr\b/i],
+      ['SQL', /\bsql\b/i],
+      ['PostgreSQL', /\bpostgresql\b|\bpostgres\b/i],
+      ['MySQL', /\bmysql\b/i],
+      ['MongoDB', /\bmongodb\b|\bmongo\b/i],
+      ['Machine Learning', /\bmachine\s+learning\b|\bml\b/i],
+      ['Data Analysis', /\bdata\s+analysis\b|\banalytics\b/i],
+      ['Pandas', /\bpandas\b/i],
+      ['NumPy', /\bnumpy\b/i],
+      ['scikit-learn', /\bscikit[-\s]?learn\b|\bsklearn\b/i],
+      ['TensorFlow', /\btensorflow\b/i],
+      ['PyTorch', /\bpytorch\b/i],
+      ['React', /\breact(?:\.js|js)?\b/i],
+      ['FastAPI', /\bfastapi\b/i],
+      ['Django', /\bdjango\b/i],
+      ['Flask', /\bflask\b/i],
+      ['Docker', /\bdocker\b/i],
+      ['Kubernetes', /\bkubernetes\b|\bk8s\b/i],
+      ['AWS', /\baws\b|\bamazon\s+web\s+services\b/i],
+      ['Azure', /\bazure\b/i],
+      ['GCP', /\bgcp\b|\bgoogle\s+cloud\b/i],
+      ['DevOps', /\bdevops\b|\bci\/cd\b|\bci\s*cd\b/i],
+      ['Git', /\bgit\b|\bgithub\b|\bgitlab\b/i],
+      ['Linux', /\blinux\b/i],
+      ['Networking', /\bnetworking\b|\btcp\/ip\b/i],
+      ['Cybersecurity', /\bcybersecurity\b|\binformation\s+security\b/i],
+      ['Tableau', /\btableau\b/i],
+      ['Power BI', /\bpower\s*bi\b/i],
+      ['Excel', /\bexcel\b/i],
+      ['Airflow', /\bairflow\b/i],
+      ['Spark', /\bspark\b|\bpyspark\b/i],
+      ['Kafka', /\bkafka\b/i],
+      ['REST', /\brest(?:ful)?\b/i],
+      ['GraphQL', /\bgraphql\b/i],
+    ]
+    const detectedSkills = safeRules.filter(([, regex]) => regex.test(normalized)).map(([skill]) => skill)
+    const detectedRole = ROLE_PATTERNS.find(role => new RegExp(role.replace(/\s+/g, '\\s+'), 'i').test(normalized)) || ''
+    return { detectedSkills, detectedRole }
+  }
+
+  const handleResumeUpload = async (file) => {
+    if (!file) return
+    setResumeNotice('')
+    setResumeLoading(true)
+    try {
+      const parsed = await parseResume(file)
+      const detectedSkills = parsed.skills || []
+      const detectedRole = parsed.role || ''
+      setParsedResume({ skills: detectedSkills, role: detectedRole, fileName: file.name })
+      if (detectedSkills.length) mergeSkills(detectedSkills)
+      if (detectedRole && FIELDS.includes(detectedRole)) set('field_of_study', detectedRole)
+      if (!detectedSkills.length) setResumeNotice(t.form.resume.unsupported)
+    } catch (error) {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const text = String(reader.result || '')
+        const { detectedSkills, detectedRole } = parseResumeText(text)
+        setParsedResume({ skills: detectedSkills, role: detectedRole, fileName: file.name })
+        if (detectedSkills.length) mergeSkills(detectedSkills)
+        if (!detectedSkills.length) setResumeNotice(t.form.resume.unsupported)
+      }
+      reader.onerror = () => setResumeNotice(t.form.resume.unsupported)
+      reader.onloadend = () => setResumeLoading(false)
+      reader.readAsText(file)
+      return
+    }
+    setResumeLoading(false)
+  }
+
+  const clearParsedResume = () => {
+    setParsedResume({ skills: [], role: '', fileName: '' })
+    setResumeNotice('')
+    if (resumeRef.current) resumeRef.current.value = ''
   }
 
   const techChecked  = TECH_SKILLS.filter(s => form[s.key] === 1).length
   const softAvg      = SOFT_KEYS.reduce((a, k) => a + form[k], 0) / SOFT_KEYS.length
-  const hasSkills    = form.skills.length > 0
-  const hasGpa       = form.gpa !== '' && Number(form.gpa) >= 0 && Number(form.gpa) <= 4
-  const completedSteps = [hasSkills, hasGpa, techChecked > 0, true].filter(Boolean).length
-  const progress     = Math.round((completedSteps / 4) * 100)
+  const hasGpa       = form.gpa !== '' && Number(form.gpa) >= 2 && Number(form.gpa) <= 4
+
+  const useDemo = () => {
+    setForm({ ...DEMO_PROFILE, skills: [...DEMO_PROFILE.skills] })
+    setIsDemo(true)
+    setErrors({})
+    setSkillInput('')
+    clearParsedResume()
+  }
 
   const layoutClass = [
     styles.pageLayout,
@@ -198,25 +329,8 @@ export default function Form({ onSubmit, loading }) {
 
           <div className={styles.sidebarSection}>
             <div className={styles.sidebarLabel}>{t.form.sidebar.progress}</div>
-            <div className={styles.progressWrap}>
-              <div className={styles.progressBar}>
-                <div className={styles.progressFill} style={{ width: `${progress}%` }}/>
-              </div>
-              <span className={styles.progressPct}>{progress}%</span>
-            </div>
-            <div className={styles.progressSteps}>
-              {[
-                { label: t.form.sidebar.steps.customSkills, done: hasSkills       },
-                { label: t.form.sidebar.steps.gpa,          done: hasGpa          },
-                { label: t.form.sidebar.steps.tech,         done: techChecked > 0 },
-                { label: t.form.sidebar.steps.soft,         done: true            },
-              ].map(({ label, done }) => (
-                <div key={label} className={`${styles.progressStep} ${done ? styles.progressStepDone : ''}`}>
-                  <span className={styles.progressDot}>{done ? '✓' : '○'}</span>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
+            <p className={styles.readiness}>{hasGpa ? t.review.ready : t.review.required}</p>
+            <p className={styles.hint}>{t.review.progressHint}</p>
           </div>
 
           <div className={styles.sidebarSection}>
@@ -261,14 +375,74 @@ export default function Form({ onSubmit, loading }) {
           <div className={styles.header}>
             <h1 className={styles.title}>{t.form.title}</h1>
             <p className={styles.subtitle}>{t.form.subtitle}</p>
+            <p className={styles.requirementNote}>{t.review.required}<br />{t.review.optional}</p>
+            <div className={styles.demoActions}>
+              <button type="button" className={styles.demoButton} disabled={loading} onClick={useDemo}>{t.review.demo}</button>
+              {isDemo && <button type="button" className={styles.resetButton} disabled={loading} onClick={() => { setForm(DEFAULT); setIsDemo(false); setErrors({}); clearParsedResume() }}>{t.review.reset}</button>}
+            </div>
+            {isDemo && <div className={styles.demoNotice} role="status">
+              <strong>{t.review.demoLabel}</strong><p>{t.review.demoHint}</p>
+              {t.review.demoSharedWarning && <p className={styles.requirementNote} style={{ marginTop: 6, color: 'var(--amber-11, #b45309)' }}>{t.review.demoSharedWarning}</p>}
+              <button type="submit" form="career-profile" className={styles.demoButton} disabled={loading}>{loading ? t.form.submitting : t.form.submit} →</button>
+            </div>}
           </div>
 
-          <form className={styles.form} onSubmit={handleSubmit}>
+          <form id="career-profile" className={styles.form} onSubmit={handleSubmit}>
+
+            {/* ── CV / Resume parser ── */}
+            <div className={styles.section}>
+              <div className={styles.sectionLabel}>{t.form.resume.label}</div>
+              <p className={styles.hint}>{t.form.resume.hint}</p>
+              <div className={styles.resumeBox}>
+                <input
+                  ref={resumeRef}
+                  className={styles.resumeInput}
+                  type="file"
+                  accept=".pdf,.txt,.doc,.docx,text/plain,application/pdf"
+                  onChange={e => handleResumeUpload(e.target.files?.[0])}
+                />
+                <button type="button" className={styles.resumeUploadBtn} onClick={() => resumeRef.current?.click()}>
+                  {resumeLoading ? (
+                    <span className={styles.spinner}/>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                      <polyline points="17 8 12 3 7 8"/>
+                      <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                  )}
+                  {resumeLoading ? t.form.submitting : (parsedResume.fileName || t.form.resume.upload)}
+                </button>
+                {(parsedResume.skills.length > 0 || parsedResume.role || resumeNotice) && (
+                  <div className={styles.resumeParsed}>
+                    {parsedResume.role && (
+                      <div className={styles.resumeRole}>
+                        <span>{t.form.resume.role}</span>
+                        <strong>{parsedResume.role}</strong>
+                      </div>
+                    )}
+                    <div className={styles.resumeParsedHeader}>
+                      <span>{t.form.resume.parsed}</span>
+                      <button type="button" onClick={clearParsedResume}>{t.form.resume.clear}</button>
+                    </div>
+                    {parsedResume.skills.length ? (
+                      <div className={styles.sidebarTags}>
+                        {parsedResume.skills.map(skill => (
+                          <span key={skill} className={styles.sidebarTag}>{skill}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={styles.sidebarEmpty}>{resumeNotice || t.form.resume.empty}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* ── Custom Skills with Autocomplete ── */}
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{t.form.skills.label}</div>
-              <p className={styles.hint}>{t.form.skills.hint}</p>
+              <p className={styles.hint}>{t.review.skillsHint}</p>
               <div className={styles.tagsInputWrap} ref={acRef}>
                 <div
                   className={`${styles.tagsInput} ${errors.skills ? styles.error : ''}`}
@@ -277,11 +451,12 @@ export default function Form({ onSubmit, loading }) {
                   {form.skills.map(s => (
                     <span key={s} className={styles.tag}>
                       {s}
-                      <button type="button" className={styles.tagX} onClick={() => removeSkill(s)}>×</button>
+                      <button type="button" className={styles.tagX} onClick={() => removeSkill(s)} aria-label={`${t.review.removeSkill}: ${s}`}>×</button>
                     </span>
                   ))}
                   <input
                     ref={inputRef}
+                    aria-label={t.form.skills.label}
                     className={styles.tagsInner}
                     value={skillInput}
                     onChange={handleSkillInput}
@@ -335,19 +510,19 @@ export default function Form({ onSubmit, loading }) {
               <div className={styles.sectionLabel}>{t.form.personal.label}</div>
               <div className={styles.grid2}>
                 <div className={styles.field}>
-                  <label className={styles.label}>{t.form.personal.gpa}</label>
+                  <label className={styles.label} htmlFor="profile-gpa">{t.review.required}</label>
                   <input
                     className={`${styles.input} ${errors.gpa ? styles.error : ''}`}
-                    type="number" min="0" max="4" step="0.1"
+                    id="profile-gpa" required type="number" min="2" max="4" step="0.1"
                     value={form.gpa} placeholder="3.5"
                     onChange={e => set('gpa', e.target.value)}
                   />
                   {errors.gpa && <span className={styles.errorMsg}>{errors.gpa}</span>}
                 </div>
                 <div className={styles.field}>
-                  <label className={styles.label}>{t.form.personal.field}</label>
+                  <label className={styles.label} htmlFor="profile-field">{t.form.personal.field}</label>
                   <select
-                    className={styles.select}
+                    id="profile-field" className={styles.select}
                     value={form.field_of_study}
                     onChange={e => set('field_of_study', e.target.value)}
                   >
@@ -360,7 +535,7 @@ export default function Form({ onSubmit, loading }) {
             {/* ── Technical Skills ── */}
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{t.form.technical.label}</div>
-              <p className={styles.hint}>{t.form.technical.hint}</p>
+              <p className={styles.hint}>{t.review.technicalHint}</p>
               <div className={styles.checkGrid}>
                 {TECH_SKILLS.map(({ key, label }) => (
                   <label key={key} className={styles.checkItem}>
@@ -379,7 +554,7 @@ export default function Form({ onSubmit, loading }) {
             {/* ── Soft Skills ── */}
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{t.form.soft.label}</div>
-              <p className={styles.hint}>{t.form.soft.hint}</p>
+              <p className={styles.hint}>{t.review.softHint}</p>
               <div className={styles.softGrid}>
                 {SOFT_KEYS.map(key => (
                   <div key={key} className={styles.softItem}>
@@ -390,6 +565,8 @@ export default function Form({ onSubmit, loading }) {
                           key={n} type="button"
                           className={`${styles.star} ${form[key] >= n ? styles.starOn : ''}`}
                           onClick={() => set(key, n)}
+                          aria-label={`${t.form.soft[key]}: ${n} / 5`}
+                          aria-pressed={form[key] === n}
                         >●</button>
                       ))}
                     </div>
@@ -425,9 +602,9 @@ export default function Form({ onSubmit, loading }) {
             <div className={styles.chatBubble}>
               <strong>{t.form.guide.professionsTitle}</strong>
               <ul className={styles.chatList}>
-                <li>Data Analyst</li><li>Data Engineer</li><li>Data Scientist</li>
-                <li>ML Engineer</li><li>Business Analyst</li>
-                <li>Cloud Engineer</li><li>Software Engineer</li>
+                {PROFESSION_KEYS.map(prof => (
+                  <li key={prof}>{t.professions?.[prof] || prof}</li>
+                ))}
               </ul>
             </div>
           </div>

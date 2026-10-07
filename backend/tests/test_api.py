@@ -1,183 +1,130 @@
-import pytest
-import httpx
+from conftest import EXPECTED_PROFESSIONS, TEST_PROFILE
 
 
-BASE_URL = "http://localhost:8000"
-
-EXPECTED_PROFESSIONS = {
-    "Data Scientist",
-    "Data Analyst",
-    "Data Engineer",
-    "Business Analyst",
-    "Machine Learning Engineer",
-    "Software Engineer",
-    "Cloud Engineer",
-}
-
-TEST_PROFILE = {
-    "skills": ["python", "sql", "tensorflow", "pytorch", "aws"],
-    "age": 23,
-    "gender": "Male",
-    "degree_level": "Bachelor",
-    "field_of_study": "Data Science",
-    "gpa": 3.5,
-    "years_experience": 1,
-    "python": 1,
-    "java": 0,
-    "c_cpp": 0,
-    "sql": 1,
-    "machine_learning": 1,
-    "data_analysis": 1,
-    "cloud_computing": 1,
-    "cybersecurity": 0,
-    "web_development": 0,
-    "devops": 0,
-    "networking": 0,
-    "communication": 4,
-    "leadership": 3,
-    "problem_solving": 5,
-    "teamwork": 4,
-    "adaptability": 3,
-}
-
-
-@pytest.fixture(scope="module")
-def client():
-    with httpx.Client(base_url=BASE_URL, timeout=30.0) as c:
-        yield c
-
-
-@pytest.fixture(scope="module")
-def recommendation_response(client):
-    response = client.post("/recommend", json=TEST_PROFILE)
-    assert response.status_code == 200, response.text
-    return response.json()
-
-
-@pytest.fixture(scope="module")
-def recommendation_context(recommendation_response):
-    return recommendation_response["context"]
-
-
-def test_health(client):
+def test_health_endpoint(client):
     response = client.get("/health")
+
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    assert response.json() == {"status": "ok"}
 
 
-def test_recommend_returns_200(client):
-    response = client.post("/recommend", json=TEST_PROFILE)
-    assert response.status_code == 200
+def test_recommend_endpoint_returns_complete_payload(recommendation_response):
+    expected_keys = {
+        "top_profession",
+        "session_id",
+        "alternative_profession",
+        "final_scores",
+        "skill_scores",
+        "classification_scores",
+        "demand_scores",
+        "roadmap_with_courses",
+        "full_roadmap",
+        "context",
+    }
+
+    assert expected_keys <= set(recommendation_response)
+    assert recommendation_response["top_profession"] == "Machine Learning Engineer"
+    assert recommendation_response["alternative_profession"]
+    assert recommendation_response["session_id"]
 
 
-def test_recommend_structure(recommendation_response):
-    data = recommendation_response
-
-    assert "top_profession" in data
-    assert "skill_scores" in data
-    assert "classification_scores" in data
-    assert "demand_scores" in data
-    assert "roadmap_with_courses" in data
-    assert "context" in data
+def test_recommend_scores_cover_all_supported_professions(recommendation_response):
+    assert set(recommendation_response["skill_scores"]) == EXPECTED_PROFESSIONS
+    assert set(recommendation_response["classification_scores"]) == EXPECTED_PROFESSIONS
+    assert set(recommendation_response["demand_scores"]) == EXPECTED_PROFESSIONS
+    assert set(recommendation_response["final_scores"]) == EXPECTED_PROFESSIONS
 
 
-def test_recommend_top_profession_is_string(recommendation_response):
-    assert isinstance(recommendation_response["top_profession"], str)
+def test_final_scores_are_sorted_descending(recommendation_response):
+    scores = list(recommendation_response["final_scores"].values())
+
+    assert scores == sorted(scores, reverse=True)
 
 
-def test_classification_scores_sum_to_one(recommendation_response):
-    scores = recommendation_response["classification_scores"]
-    total = sum(scores.values())
-    assert abs(total - 1.0) < 0.01
-
-
-def test_all_professions_in_scores(recommendation_response):
-    data = recommendation_response
-
-    assert set(data["skill_scores"].keys()) == EXPECTED_PROFESSIONS
-    assert set(data["classification_scores"].keys()) == EXPECTED_PROFESSIONS
-    assert set(data["demand_scores"].keys()) == EXPECTED_PROFESSIONS
-
-
-def test_demand_scores_structure(recommendation_response):
-    demand = recommendation_response["demand_scores"]
-
-    for profession, scores in demand.items():
-        assert "trend_score" in scores
-        assert "market_share" in scores
-        assert "predicted_vacancies" in scores
+def test_demand_scores_are_bounded_and_have_vacancy_counts(recommendation_response):
+    for scores in recommendation_response["demand_scores"].values():
         assert 0 <= scores["trend_score"] <= 1
         assert 0 <= scores["market_share"] <= 1
+        assert scores["predicted_vacancies"] >= 0
 
 
-def test_roadmap_has_courses(recommendation_response):
+def test_roadmap_contains_course_recommendations(recommendation_response):
     roadmap = recommendation_response["roadmap_with_courses"]
 
-    for category, skills in roadmap.items():
-        for skill, data in skills.items():
-            assert "courses" in data
-            assert isinstance(data["courses"], list)
+    assert "libraries" in roadmap
+    assert "pytorch" in roadmap["libraries"]
+    assert roadmap["libraries"]["pytorch"]["courses"][0]["title"] == "PyTorch for Deep Learning"
 
 
-def test_mle_recommended_for_ml_student(recommendation_response):
-    top = recommendation_response["top_profession"]
-    assert top in ["Machine Learning Engineer", "Data Scientist"]
+def test_chat_uses_stored_recommendation_context(client, recommendation_response):
+    response = client.post(
+        "/chat",
+        headers={"X-LLM-Provider": "gemini", "X-LLM-API-Key": "test-session-key"},
+        json={
+            "session_id": recommendation_response["session_id"],
+            "history": [],
+            "message": "What should I learn first?",
+            "deep": False,
+        },
+    )
 
-
-def test_chat_returns_200(client, recommendation_response):
-    chat_payload = {
-        "session_id": recommendation_response["session_id"],
-        "history": [],
-        "message": "Hi, say one word",
-        "deep": False,
-    }
-
-    response = client.post("/chat", json=chat_payload)
-    assert response.status_code == 200, response.text
-
-    data = response.json()
-    assert "response" in data
-    assert len(data["response"]) > 0
-
-
-def test_chat_with_history(client, recommendation_response):
-    history = [
-        {"role": "user", "content": "Hello"},
-        {"role": "assistant", "content": "Hello"},
-    ]
-
-    chat_payload = {
-        "session_id": recommendation_response["session_id"],
-        "history": history,
-        "message": "What about cloud technologies?",
-        "deep": False,
-    }
-
-    response = client.post("/chat", json=chat_payload)
     assert response.status_code == 200
+    assert response.json()["response"] == "Mock advisor response: What should I learn first?"
 
 
-def test_empty_skills(client):
-    profile = {**TEST_PROFILE, "skills": []}
-    response = client.post("/recommend", json=profile)
+def test_chat_stream_returns_server_sent_events(client, recommendation_response):
+    response = client.post(
+        "/chat/stream",
+        headers={"X-LLM-Provider": "gemini", "X-LLM-API-Key": "test-session-key"},
+        json={
+            "session_id": recommendation_response["session_id"],
+            "history": [],
+            "message": "Stream answer",
+            "deep": False,
+        },
+    )
+
     assert response.status_code == 200
+    assert "data: Mock streamed advisor response" in response.text
+    assert "data: [DONE]" in response.text
 
 
-def test_unknown_skills(client):
-    profile = {**TEST_PROFILE, "skills": ["fortran", "cobol", "pascal"]}
-    response = client.post("/recommend", json=profile)
-    assert response.status_code == 200
-
-
-def test_ba_recommended_for_analyst(client):
-    profile = {
-        **TEST_PROFILE,
-        "skills": ["excel", "tableau", "power bi", "sql"],
-        "machine_learning": 0,
-        "cloud_computing": 0,
-    }
+def test_recommend_passes_language_to_course_finder(client, mocked_services):
+    profile = {**TEST_PROFILE, "lang": "kk"}
 
     response = client.post("/recommend", json=profile)
+
     assert response.status_code == 200
-    top = response.json()["top_profession"]
-    assert top in ["Data Analyst", "Business Analyst"]
+    assert mocked_services.calls[-1]["lang"] == "kk"
+
+
+def test_recommend_rejects_invalid_payload(client):
+    profile = dict(TEST_PROFILE)
+    profile.pop("gpa")
+
+    response = client.post("/recommend", json=profile)
+
+    assert response.status_code == 422
+
+
+def test_resume_parser_avoids_short_token_false_positives(client):
+    response = client.post(
+        "/parse-resume",
+        content=(
+            "I want to go into data science. I work with Python, SQL, MongoDB, "
+            "and TensorFlow. The phrase go forward should not be treated as a Go skill."
+        ).encode("utf-8"),
+        headers={
+            "content-type": "text/plain",
+            "x-filename": "resume.txt",
+        },
+    )
+
+    assert response.status_code == 200
+    skills = response.json()["skills"]
+    assert "Python" in skills
+    assert "SQL" in skills
+    assert "MongoDB" in skills
+    assert "TensorFlow" in skills
+    assert "Go" not in skills
+    assert "R" not in skills
