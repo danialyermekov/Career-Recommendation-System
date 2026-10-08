@@ -26,7 +26,7 @@ CareerFlow helps IT students choose a career direction. The application ranks su
 
 **Data scope:** Market signals come from historical 2023 job postings, not a live vacancy feed. The profile classifier is trained on synthetic educational data; scores are exploratory guidance, not predictions of career success. Dataset provenance and methodology are documented below.
 
-**Repository:** [danialyermekov/Career-Recommendation-System](https://github.com/danialyermekov/Career-Recommendation-System).
+**Repository:** [danialyermekov/Career-Recommendation-System](https://github.com/danialyermekov/careerflow).
 
 For the guided demo, Gemini preview configuration, quota limits and manual release gates, see [guided-demo-ai-preview.md](docs/guided-demo-ai-preview.md).
 For v1.1 configuration, safe migration, release gates and rollback, see [deployment-v1.1.md](docs/deployment-v1.1.md).
