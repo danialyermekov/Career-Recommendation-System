@@ -1,6 +1,29 @@
 import { translations } from './i18n'
 
+test('public beta elements and policy content have complete EN/RU/KZ translations', () => {
+  for (const lang of ['ru', 'kk']) {
+    expect(Object.keys(translations[lang].beta).sort()).toEqual(Object.keys(translations.en.beta).sort())
+    for (const key of Object.keys(translations.en.beta)) expect(translations[lang].beta[key]).toBeTruthy()
+  }
+})
+
+test('public product pages have matching translated keys and roadmap items', () => {
+  for (const lang of ['ru', 'kk']) {
+    expect(Object.keys(translations[lang].product).sort()).toEqual(Object.keys(translations.en.product).sort())
+    expect(Object.keys(translations[lang].product.roadmapItems).sort()).toEqual(Object.keys(translations.en.product.roadmapItems).sort())
+    expect(translations[lang].product.howSteps).toHaveLength(5)
+    expect(translations[lang].product.mvpChanges).toHaveLength(4)
+  }
+})
+
 const supportedLanguages = ['en', 'ru', 'kk']
+
+test.each(['en', 'ru', 'kk'])('%s translates the complete walkthrough and preview', lang => {
+  expect(Object.keys(translations[lang].experience).sort()).toEqual(Object.keys(translations.en.experience).sort())
+  expect(translations[lang].experience.steps).toHaveLength(5)
+  expect(translations[lang].experience.suggestions).toHaveLength(3)
+  expect(translations[lang].experience.remaining(2, 3)).toContain('2')
+})
 
 const supportedProfessions = [
   'Data Scientist',

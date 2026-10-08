@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+data/*.sqlite3*
+data/legacy-backups/
+*.log
+feedback-*.csv

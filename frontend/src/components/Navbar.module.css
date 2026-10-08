@@ -12,7 +12,7 @@
   margin: 0 auto;
   min-height: 58px;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 8px 10px 8px 14px;
@@ -28,7 +28,8 @@
 .logo {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  min-height: 44px;
+  max-width: 100%;
   width: fit-content;
   border: none;
   background: transparent;
@@ -44,24 +45,7 @@
   transform: translateY(-1px);
 }
 
-.logoMark {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  color: var(--accent);
-  background: var(--accent-light);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
-}
-
-.logoText {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
+.logo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .actions {
   display: flex;
@@ -69,6 +53,11 @@
   justify-content: flex-end;
   gap: 6px;
 }
+
+.accountLink, .feedbackLink { color: var(--text); min-height: 44px; display: inline-flex; align-items: center; padding: 0 8px; font-size: .85rem; text-decoration: none; }
+.accountLink:focus-visible, .feedbackLink:focus-visible { outline: 2px solid var(--accent); }
+.beta { color: var(--accent); font-size: .7rem; }
+@media (max-width: 640px) { .beta { display: none; } .actions { gap: 2px; } }
 
 .iconBtn {
   height: 36px;
@@ -126,7 +115,7 @@
 
 @media (max-width: 760px) {
   .inner {
-    grid-template-columns: 1fr auto;
+    gap: 8px;
   }
 
 }
@@ -140,7 +129,21 @@
     width: calc(100% - 16px);
   }
 
-  .logoText {
-    display: none;
+}
+
+@media (max-width: 540px) {
+  .inner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    padding: 4px 10px;
   }
+
+  .logo { justify-self: center; }
+  .actions { justify-content: center; flex-wrap: wrap; }
+  .iconBtn { width: 44px; height: 44px; }
+  .langGroup { height: 44px; }
+  .langBtn { height: 36px; min-width: 36px; }
+  .accountLink { max-width: 150px; text-align: center; }
+  .accountLink, .feedbackLink { padding: 0 5px; font-size: .8rem; }
+  .langBtn { padding: 0 6px; min-width: 30px; }
 }

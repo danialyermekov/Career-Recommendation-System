@@ -4,5 +4,18 @@ services:
       context: .
       args:
         REACT_APP_API_URL: ""
+        REACT_APP_SUPABASE_URL: ${REACT_APP_SUPABASE_URL:?Load frontend/.env with --env-file}
+        REACT_APP_SUPABASE_PUBLISHABLE_KEY: ${REACT_APP_SUPABASE_PUBLISHABLE_KEY:?Load frontend/.env with --env-file}
+    env_file:
+      - backend/.env
+    environment:
+      SUPABASE_PUBLISHABLE_KEY: ${REACT_APP_SUPABASE_PUBLISHABLE_KEY}
+      CORS_ORIGINS: https://careerflow.live
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     ports:
       - "8000:8000"

@@ -56,6 +56,26 @@ class GeminiProvider:
             for item in history
         ] + [types.Content(role="user", parts=[types.Part(text=message)])]
 
+    def chat_preview(self, api_key, model, system, history, message):
+        from google import genai
+        from google.genai import types
+
+        logging.getLogger("google_genai._api_client").setLevel(logging.WARNING)
+        thinking = (types.ThinkingConfig(thinking_budget=0) if model.startswith('gemini-2.5-')
+                    else types.ThinkingConfig(thinking_level='minimal'))
+        for name in ('httpx', 'httpcore'):
+            logging.getLogger(name).setLevel(logging.WARNING)
+        api_key = api_key.strip().strip('\'"')
+        with genai.Client(api_key=api_key, vertexai=False, http_options=types.HttpOptions(
+            base_url='https://generativelanguage.googleapis.com', timeout=20000,
+            retry_options=types.HttpRetryOptions(attempts=1))) as client:
+            response = client.models.generate_content(model=model, contents=self._contents(history, message),
+                config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=600,
+                    thinking_config=thinking, tools=[]))
+            if not response.text:
+                raise LLMError(503, 'trial_provider_failed', 'Free AI preview could not answer.')
+            return response.text
+
     def chat(self, api_key: str, system: str, history: list[dict[str, str]], message: str) -> str:
         from google.genai import types
 
@@ -146,7 +166,7 @@ PROVIDERS = {"anthropic": ClaudeProvider, "gemini": GeminiProvider}
 
 
 def validate_credentials(provider: str, api_key: str) -> tuple[str, str]:
-    api_key = api_key.strip()
+    api_key = api_key.strip().strip('\'"')
     if not api_key:
         raise LLMError(400, "key_missing", "API key missing. Add your Claude or Gemini API key to enable the AI assistant.")
     if provider not in PROVIDERS:

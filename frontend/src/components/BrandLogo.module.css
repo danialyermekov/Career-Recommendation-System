@@ -1,0 +1,21 @@
+.brand {
+  display: block;
+  width: 208px;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.brand img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Keep the supplied white lettering readable without changing its colors. */
+:global([data-theme="light"]) .brand img {
+  filter: drop-shadow(0 0 .65px #24364d);
+}
+
+@media (max-width: 640px) {
+  .brand { width: 180px; }
+}

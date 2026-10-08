@@ -1,3 +1,6 @@
+import { betaTranslations } from './betaI18n'
+import { productTranslations } from './productI18n'
+import { experienceTranslations } from './experienceI18n'
 const professionsEn = {
   'Data Scientist': 'Data Scientist',
   'Data Analyst': 'Data Analyst',
@@ -30,23 +33,21 @@ const professionsKk = {
 
 export const translations = {
   en: {
+    beta: betaTranslations.en,
+    product: productTranslations.en,
+    experience: experienceTranslations.en,
     footer: {
       "links": "Footer links",
+      "contact": "Contact",
+      "maintainer": "Developed and maintained by Danial Yermekov.",
       "privacy": "Privacy",
       "close": "Close",
-      "paragraphs": [
-        "CareerFlow uses the profile information you supply to generate career recommendations, skill gaps and learning roadmaps. These features do not require an AI API key.",
-        "Uploaded CV or resume documents are parsed in memory in real time solely to detect technical skills and experience signals for your form. Resume files are not saved permanently on the server or linked to visitor identities.",
-        "Profiles, recommendation results, skill gaps, roadmaps, progress and course-filter preferences are saved in the server’s SQLite database. History currently uses a shared demo account without sign-in or private access controls: other visitors can view saved profiles and results, change progress or clear shared history. Do not enter sensitive or confidential information.",
-        "The optional AI Advisor uses your own Claude or Gemini API key (BYOK). The key stays in frontend memory during this loaded application, including SPA navigation, and is cleared by a full refresh or closing the page. CareerFlow does not persist it in localStorage, sessionStorage, cookies or its database.",
-        "The key is sent through CareerFlow’s backend only with the AI request that needs it and is used for that provider request. CareerFlow’s application code does not log or save it. AI requests send your message, conversation history and recommendation context to the selected provider; voice transcription sends audio to Gemini. Provider processing and retention follow that provider’s policies.",
-        "Language and theme preferences use localStorage; demo-result labels use sessionStorage. This is a short MVP privacy notice."
-      ]
+      "paragraphs": [...betaTranslations.en.privacyText, experienceTranslations.en.privacy]
     },
     review: {
       demo: 'Use demo profile', demoLabel: 'Demo profile', demoHint: 'A Computer Science student with Python, SQL and some data analysis experience. Review or edit the sample, then get recommendations.',
-      demoSharedWarning: 'Note: You are using the demo profile. Recommendations will be saved to the shared public MVP history without authentication.',
-      sharedSaveWarning: 'Shared history: results are stored in an anonymous demonstration database visible to all visitors.',
+      demoSharedWarning: betaTranslations.en.historyNote,
+      sharedSaveWarning: betaTranslations.en.historyNote,
       removeSkill: 'Remove skill', start: 'Create your profile', reset: 'Start with an empty profile', ready: 'Ready to recommend', required: 'Required: GPA from 2.0 to 4.0', optional: 'Optional: skills, study field and self-ratings. Defaults are used if unchanged.',
       technicalHint: 'These broad indicators feed the profile classifier. The skill list above feeds job-skill matching and the roadmap; review both when importing a CV.',
       skillsHint: 'Specific tools and languages you already know. Used for TF-IDF skill matching and to exclude known skills from the roadmap.',
@@ -74,7 +75,7 @@ export const translations = {
       scoreTitle: 'Career match score', scoreNote: 'A composite ranking score out of 100, not a probability of success.', normalized: 'Normalized signals, 0–100', contribution: 'points', calculation: 'Inspect calculation and source values', raw: 'Raw value', normalizedValue: 'Normalized', weight: 'Weight', total: 'Match score',
       normalization: 'Profile values are divided by their sum. Skill similarity, trend and market share are each divided by the largest value across the scored careers (a zero divisor uses 1). The backend rounds the weighted sum to four decimals, then the interface multiplies it by 100 and displays one decimal. There is no final normalization across careers.',
       marketNote: 'Market signals use the 2023 snapshot. The service maps the current calendar week to 2023; vacancy estimates and shares refer only to this dataset and these tracks.',
-      historyNote: 'Shared demonstration history: the app currently uses one anonymous demo account. Entries are separate runs, not a private account history.', historyTab: 'History', historySkills: 'skills entered', historyTime: 'Run at', clearHistoryConfirm: 'Clear the shared demonstration history for all visitors? This cannot be undone.',
+      historyNote: betaTranslations.en.historyNote, historyTab: 'History', historySkills: 'skills entered', historyTime: 'Run at', clearHistoryConfirm: 'Clear your recommendation history? This cannot be undone.',
       roadmapMethod: 'Rule-based learning steps for missing skills. Progress counts the steps you mark complete, not assessed proficiency.',
       sources: 'Source and limitations', optionalAi: 'Optional AI Advisor', missingWeights: 'Weights are unavailable for this saved result.',
     },
@@ -339,6 +340,14 @@ export const translations = {
       voiceError: 'Voice input failed. Try again.',
       openAiPanel: 'Open AI advisor',
       closeAiPanel: 'Close AI advisor',
+      askClaude: 'Ask Claude',
+      askGemini: 'Ask Gemini',
+      askAi: 'Ask AI Advisor',
+      askClaudeRecommendation: 'Ask Claude about this recommendation',
+      askGeminiRecommendation: 'Ask Gemini about this recommendation',
+      askAiRecommendation: 'Ask AI Advisor about this recommendation',
+      aiCtaTitle: 'Have questions about this recommendation?',
+      aiCtaSubtitle: 'Discuss career growth, skill gaps, or learning steps with your personal assistant.',
       analyzing: 'Analyzing recommendations...',
       assistantScope: 'I can help with recommendations, skill gaps, roadmap, courses, and your results.',
       profileHistory: 'Profile and history',
@@ -397,23 +406,21 @@ export const translations = {
   },
 
   ru: {
+    beta: betaTranslations.ru,
+    product: productTranslations.ru,
+    experience: experienceTranslations.ru,
     footer: {
       "links": "Ссылки в подвале",
+      "contact": "Контакт",
+      "maintainer": "Разработку и поддержку осуществляет Danial Yermekov.",
       "privacy": "Конфиденциальность",
       "close": "Закрыть",
-      "paragraphs": [
-        "CareerFlow использует введённые вами данные профиля для рекомендаций профессий, поиска пробелов в навыках и учебных планов. Эти функции не требуют API-ключа.",
-        "Загружаемые файлы резюме (CV) обрабатываются в оперативной памяти исключительно для извлечения названий навыков и предварительного заполнения формы. Файлы резюме не сохраняются на сервере перманентно и не привязываются к личностям посетителей.",
-        "Профили, результаты рекомендаций, пробелы в навыках, учебные планы, прогресс и фильтры курсов сохраняются в SQLite на сервере. История сейчас общая: используется демо-аккаунт без входа и защиты личного доступа. Другие посетители могут просматривать сохранённые профили и результаты, менять прогресс или очищать общую историю. Не вводите чувствительные или конфиденциальные данные.",
-        "Необязательный AI Advisor использует ваш ключ Claude или Gemini (BYOK). Ключ остаётся в памяти загруженного приложения, в том числе при переходах внутри SPA, и очищается при полной перезагрузке или закрытии страницы. CareerFlow не сохраняет его в localStorage, sessionStorage, cookies или базе данных.",
-        "Ключ передаётся через сервер CareerFlow только с AI-запросом, которому он нужен, и используется для этого запроса к провайдеру. Код приложения не записывает ключ в логи и не сохраняет его. Выбранному провайдеру передаются сообщение, история беседы и контекст рекомендаций; при расшифровке голоса аудио отправляется Gemini. Обработка и хранение данных провайдером регулируются его правилами.",
-        "Язык и тема сохраняются в localStorage; метки демо-результатов — в sessionStorage. Это краткое уведомление о конфиденциальности MVP."
-      ]
+      "paragraphs": [...betaTranslations.ru.privacyText, experienceTranslations.ru.privacy]
     },
     review: {
       demo: 'Использовать демо-профиль', demoLabel: 'Демо-профиль', demoHint: 'Студент Computer Science, знакомый с Python, SQL и анализом данных. Проверьте или измените пример и получите рекомендации.',
-      demoSharedWarning: 'Внимание: вы используете демонстрационный профиль. Результаты попадут в общую анонимную историю MVP без авторизации.',
-      sharedSaveWarning: 'История общая: сессия сохраняется в анонимную демонстрационную базу данных и видна всем посетителям.',
+      demoSharedWarning: betaTranslations.ru.historyNote,
+      sharedSaveWarning: betaTranslations.ru.historyNote,
       removeSkill: 'Удалить навык', start: 'Создать свой профиль', reset: 'Начать с пустого профиля', ready: 'Можно получить рекомендацию', required: 'Обязательно: GPA от 2,0 до 4,0', optional: 'Необязательно: навыки, специальность и самооценка. Без изменений используются исходные значения.',
       technicalHint: 'Эти общие признаки использует классификатор профиля. Список навыков выше нужен для сравнения с вакансиями и построения плана; после импорта CV проверьте оба раздела.',
       skillsHint: 'Конкретные инструменты и языки, которые вы уже знаете. Нужны для TF-IDF сравнения навыков и исключения знакомых тем из плана.',
@@ -441,7 +448,7 @@ export const translations = {
       scoreTitle: 'Балл соответствия профессии', scoreNote: 'Составной балл для ранжирования из 100, а не вероятность успеха.', normalized: 'Нормализованные сигналы, 0–100', contribution: 'балла', calculation: 'Расчёт и исходные значения', raw: 'Исходное', normalizedValue: 'Нормализованное', weight: 'Вес', total: 'Балл соответствия',
       normalization: 'Значения профиля делятся на их сумму. Сходство навыков, тренд и доля спроса отдельно делятся на максимум среди оцениваемых профессий (при нулевом делителе используется 1). Backend округляет взвешенную сумму до четырёх знаков, затем интерфейс умножает её на 100 и показывает один знак после запятой. Итоговые баллы между профессиями дополнительно не нормализуются.',
       marketNote: 'Рыночные сигналы используют срез 2023 года. Сервис переносит текущую календарную неделю в 2023 год; оценки вакансий и долей относятся только к этому датасету и этим направлениям.',
-      historyNote: 'Общая демонстрационная история: приложение пока использует одну анонимную учётную запись. Записи — отдельные запуски, а не личная история аккаунта.', historyTab: 'История', historySkills: 'навыков указано', historyTime: 'Время запуска', clearHistoryConfirm: 'Удалить общую демонстрационную историю всех посетителей? Отменить это действие нельзя.',
+      historyNote: betaTranslations.ru.historyNote, historyTab: 'История', historySkills: 'навыков указано', historyTime: 'Время запуска', clearHistoryConfirm: 'Удалить вашу историю рекомендаций? Отменить это действие нельзя.',
       roadmapMethod: 'План для недостающих навыков построен по правилам. Прогресс считает отмеченные вами шаги, а не проверенный уровень знаний.',
       sources: 'Источники и ограничения', optionalAi: 'Необязательный ИИ-советник', missingWeights: 'Для этого сохранённого результата веса недоступны.',
     },
@@ -706,6 +713,14 @@ export const translations = {
       voiceError: 'Голосовой ввод не сработал. Попробуйте ещё раз.',
       openAiPanel: 'Открыть ИИ советника',
       closeAiPanel: 'Закрыть ИИ советника',
+      askClaude: 'Спросить Claude',
+      askGemini: 'Спросить Gemini',
+      askAi: 'Спросить AI-советника',
+      askClaudeRecommendation: 'Спросить Claude об этой рекомендации',
+      askGeminiRecommendation: 'Спросить Gemini об этой рекомендации',
+      askAiRecommendation: 'Обсудить рекомендацию с AI-советником',
+      aiCtaTitle: 'Есть вопросы по этой рекомендации?',
+      aiCtaSubtitle: 'Обсудите карьерный путь, пробелы в навыках и план обучения с персональным ассистентом.',
       analyzing: 'Анализирую рекомендации...',
       assistantScope: 'Я помогаю с рекомендациями, skill gap, roadmap, курсами и вашими результатами.',
       profileHistory: 'Профиль и история',
@@ -764,23 +779,21 @@ export const translations = {
   },
 
   kk: {
+    beta: betaTranslations.kk,
+    product: productTranslations.kk,
+    experience: experienceTranslations.kk,
     footer: {
       "links": "Төменгі сілтемелер",
+      "contact": "Байланыс",
+      "maintainer": "Әзірлеу мен қолдауды Danial Yermekov жүзеге асырады.",
       "privacy": "Құпиялық",
       "close": "Жабу",
-      "paragraphs": [
-        "CareerFlow сіз енгізген профиль деректерін мамандық ұсыну, жетіспейтін дағдыларды анықтау және оқу жоспарын жасау үшін пайдаланады. Бұл мүмкіндіктерге AI API кілті қажет емес.",
-        "Жүктелген түйіндеме (CV) файлдары тек дағдылардың атауларын анықтау және пішінді алдын ала толтыру үшін жедел жадта өңделеді. Түйіндеме файлдары серверде тұрақты сақталмайды және пайдаланушылармен байланыстырылмайды.",
-        "Профильдер, ұсыныс нәтижелері, жетіспейтін дағдылар, оқу жоспарлары, прогресс және курс сүзгілері сервердегі SQLite базасында сақталады. Тарих қазір ортақ демо-аккаунтты пайдаланады: жүйеге кіру немесе жеке қолжетімділікті қорғау жоқ. Басқа келушілер сақталған профильдер мен нәтижелерді көре алады, прогресті өзгерте алады немесе ортақ тарихты өшіре алады. Сезімтал немесе құпия ақпаратты енгізбеңіз.",
-        "Қосымша AI Advisor сіздің Claude немесе Gemini кілтіңізді пайдаланады (BYOK). Кілт жүктелген қолданбаның жадында, соның ішінде SPA ішіндегі ауысуларда қалады; бетті толық жаңартқанда немесе жапқанда өшеді. CareerFlow оны localStorage, sessionStorage, cookies немесе дерекқорда сақтамайды.",
-        "Кілт CareerFlow сервері арқылы тек оны қажет ететін AI сұрауымен жіберіліп, сол провайдер сұрауы үшін пайдаланылады. Қолданба коды кілтті журналға жазбайды және сақтамайды. Таңдалған провайдерге хабарлама, әңгіме тарихы және ұсыныс контексті жіберіледі; дауысты мәтінге айналдыру кезінде аудио Gemini-ге жіберіледі. Провайдердің деректерді өңдеуі мен сақтауы оның ережелеріне бағынады.",
-        "Тіл мен тақырып localStorage ішінде, демо нәтижелерінің белгілері sessionStorage ішінде сақталады. Бұл MVP үшін қысқаша құпиялық хабарламасы."
-      ]
+      "paragraphs": [...betaTranslations.kk.privacyText, experienceTranslations.kk.privacy]
     },
     review: {
       demo: 'Демо-профильді пайдалану', demoLabel: 'Демо-профиль', demoHint: 'Python, SQL және деректер талдауын білетін Computer Science студенті. Үлгіні тексеріп не өзгертіп, ұсыныс алыңыз.',
-      demoSharedWarning: 'Ескерту: сіз демо-профильді пайдаланып отырсыз. Нәтижелер аутентификациясыз ортақ демонстрациялық тарихқа түседі.',
-      sharedSaveWarning: 'Тарих ортақ: сессия анонимді демонстрациялық дерекқорға сақталады және барлық келушілерге көрінеді.',
+      demoSharedWarning: betaTranslations.kk.historyNote,
+      sharedSaveWarning: betaTranslations.kk.historyNote,
       removeSkill: 'Дағдыны өшіру', start: 'Өз профиліңізді жасау', reset: 'Бос профильден бастау', ready: 'Ұсыныс алуға дайын', required: 'Міндетті: GPA 2,0–4,0', optional: 'Қосымша: дағдылар, мамандық және өзіндік бағалар. Өзгертілмесе, бастапқы мәндер қолданылады.',
       technicalHint: 'Бұл жалпы белгілерді профиль классификаторы қолданады. Жоғарыдағы дағдылар тізімі вакансиялармен салыстыруға және жоспарға қажет; CV импортынан кейін екі бөлімді де тексеріңіз.',
       skillsHint: 'Сіз білетін нақты құралдар мен тілдер. TF-IDF салыстыруына және таныс дағдыларды жоспардан алып тастауға қажет.',
@@ -808,7 +821,7 @@ export const translations = {
       scoreTitle: 'Мамандыққа сәйкестік балы', scoreNote: '100 балдық құрама рейтинг, табыс ықтималдығы емес.', normalized: 'Нормаланған сигналдар, 0–100', contribution: 'балл', calculation: 'Есептеу және бастапқы мәндер', raw: 'Бастапқы', normalizedValue: 'Нормаланған', weight: 'Салмақ', total: 'Сәйкестік балы',
       normalization: 'Профиль мәндері олардың қосындысына бөлінеді. Дағды ұқсастығы, тренд және сұраныс үлесі бөлек мамандықтар арасындағы ең үлкен мәнге бөлінеді (нөлдік бөлгіш орнына 1). Backend салмақталған қосындыны төрт ондық таңбаға дөңгелектейді, содан кейін интерфейс оны 100-ге көбейтіп, бір ондық таңбамен көрсетеді. Соңғы балдар мамандықтар арасында қосымша нормаланбайды.',
       marketNote: 'Нарық сигналдары 2023 жылғы деректерді қолданады. Сервис ағымдағы күнтізбелік аптаны 2023 жылға көшіреді; вакансиялар бағасы мен үлестері тек осы деректер мен бағыттарға қатысты.',
-      historyNote: 'Ортақ демонстрациялық тарих: қолданба әзірге бір анонимді аккаунтты қолданады. Жазбалар — жеке іске қосулар, жеке аккаунт тарихы емес.', historyTab: 'Тарих', historySkills: 'дағды енгізілген', historyTime: 'Іске қосу уақыты', clearHistoryConfirm: 'Барлық келушілердің ортақ демонстрациялық тарихын өшіру керек пе? Бұл әрекет қайтарылмайды.',
+      historyNote: betaTranslations.kk.historyNote, historyTab: 'Тарих', historySkills: 'дағды енгізілген', historyTime: 'Іске қосу уақыты', clearHistoryConfirm: 'Өз ұсыныстар тарихын жою керек пе? Бұл әрекет қайтарылмайды.',
       roadmapMethod: 'Жетіспейтін дағдыларға арналған жоспар ережелермен құрылады. Прогресс тек өзіңіз белгілеген қадамдарды санайды, білім деңгейін бағаламайды.',
       sources: 'Көздер мен шектеулер', optionalAi: 'Қосымша AI кеңесші', missingWeights: 'Бұл сақталған нәтиженің салмақтары қолжетімсіз.',
     },
@@ -1073,6 +1086,14 @@ export const translations = {
       voiceError: 'Дауыспен енгізу іске аспады. Қайталап көріңіз.',
       openAiPanel: 'AI кеңесшіні ашу',
       closeAiPanel: 'AI кеңесшіні жабу',
+      askClaude: 'Claude-тан сұрау',
+      askGemini: 'Gemini-ден сұрау',
+      askAi: 'AI кеңесшіден сұрау',
+      askClaudeRecommendation: 'Бұл ұсыныс туралы Claude-тан сұрау',
+      askGeminiRecommendation: 'Бұл ұсыныс туралы Gemini-ден сұрау',
+      askAiRecommendation: 'Бұл ұсынысты AI кеңесшімен талқылау',
+      aiCtaTitle: 'Бұл ұсыныс бойынша сұрақтарыңыз бар ма?',
+      aiCtaSubtitle: 'Мансаптық даму, жетіспейтін дағдылар мен оқу жоспарын жеке ассистентпен талқылаңыз.',
       analyzing: 'Ұсыныстарды талдап жатырмын...',
       assistantScope: 'Мен ұсыныстар, skill gap, roadmap, курстар және нәтижелер бойынша көмектесемін.',
       profileHistory: 'Профиль және тарих',

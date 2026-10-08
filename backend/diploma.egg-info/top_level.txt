@@ -1,9 +1,12 @@
+auth
 config
 database
 features
+guest_sessions
 main
 roadmap
 schemas
+security
 services
 skills_taxonomy
 top_profession

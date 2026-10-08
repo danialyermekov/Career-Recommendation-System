@@ -67,12 +67,14 @@ describe('Results component', () => {
     api.getRecommendationState.mockResolvedValue({ progress: {} })
     api.saveRoadmapProgress.mockResolvedValue({})
     api.saveCourseFilterPreferences.mockResolvedValue({})
+    api.getTrialStatus.mockResolvedValue({ available: false, remaining: 0, total: 3 })
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
     await act(async () => root.render(<AppProvider><Results results={result} /></AppProvider>))
     const open = container.querySelector('.aiFab')
     await act(async () => open.click())
+    await act(async () => [...container.querySelectorAll('.advisorModes button')].find(button => button.textContent === translations.en.experience.byok).click())
   })
 
   afterEach(() => {
@@ -83,13 +85,13 @@ describe('Results component', () => {
 
   test('real assistant is disabled without a key and responds immediately to save/remove', async () => {
     expect(container.textContent).toContain(translations.en.llm.noKey)
-    expect(container.querySelector('textarea').disabled).toBe(true)
+    expect(container.querySelector('textarea[placeholder]').disabled).toBe(true)
     await act(async () => saveLLMSettings('anthropic', 'test-only-secret'))
-    expect(container.querySelector('textarea').disabled).toBe(false)
+    expect(container.querySelector('textarea[placeholder]').disabled).toBe(false)
     expect(container.querySelector(`button[aria-label="${translations.en.results.voiceRecord}"]`).disabled).toBe(true)
     expect(container.textContent).toContain(translations.en.llm.voiceGemini)
     await act(async () => clearLLMSettings())
-    expect(container.querySelector('textarea').disabled).toBe(true)
+    expect(container.querySelector('textarea[placeholder]').disabled).toBe(true)
     expect(container.textContent).toContain(translations.en.llm.noKey)
     expect(api.sendChatStream).not.toHaveBeenCalled()
   })
@@ -104,7 +106,7 @@ describe('Results component', () => {
       ? { value: new TextEncoder().encode(chunks.shift()), done: false }
       : { done: true }) }
     api.sendChatStream.mockResolvedValue({ ok: true, body: { getReader: () => reader } })
-    const input = container.querySelector('textarea')
+    const input = container.querySelector('textarea[placeholder]')
     await act(async () => Simulate.change(input, { target: { value: 'Career advice', style: {}, scrollHeight: 20 } }))
     await act(async () => container.querySelector(`button[aria-label="${translations.en.results.chatSend}"]`).click())
     expect(container.textContent).toContain(translations.en.llm.errors.key_rejected)
@@ -112,5 +114,46 @@ describe('Results component', () => {
     expect(getLLMSettings().apiKey).toBe('test-only-secret')
     const history = api.sendChatStream.mock.calls[0][0].history
     expect(history.some(m => m.content === 'Career advice')).toBe(false)
+  })
+
+  test('AI CTA button is rendered near top recommendation and dynamically updates label', async () => {
+    const ctaBtn = container.querySelector('button[aria-label*="Ask"]')
+    expect(ctaBtn).not.toBeNull()
+    expect(ctaBtn.textContent).toContain(translations.en.results.askAiRecommendation)
+
+    await act(async () => saveLLMSettings('anthropic', 'test-key'))
+    expect(ctaBtn.textContent).toContain(translations.en.results.askClaudeRecommendation)
+
+    await act(async () => saveLLMSettings('gemini', 'test-key'))
+    expect(ctaBtn.textContent).toContain(translations.en.results.askGeminiRecommendation)
+  })
+
+  test('clicking AI CTA button opens the AI Advisor drawer', async () => {
+    // Close the drawer first
+    const closeBtn = container.querySelector(`button[title="${translations.en.results.closeAiPanel}"]`)
+    expect(closeBtn).not.toBeNull()
+    await act(async () => closeBtn.click())
+    expect(container.querySelector('.chatSidebar')).toBeNull()
+
+    // Click the top recommendation CTA button
+    const ctaBtn = container.querySelector('button[aria-label*="Ask"]')
+    expect(ctaBtn).not.toBeNull()
+    await act(async () => ctaBtn.click())
+
+    // Drawer is open again
+    expect(container.querySelector('.chatSidebar')).not.toBeNull()
+  })
+
+  test('failed state loading never overwrites saved progress with empty defaults', async () => {
+    act(() => root.unmount())
+    root = createRoot(container)
+    api.getRecommendationState.mockRejectedValue(new Error('Storage unavailable'))
+    api.saveRoadmapProgress.mockClear()
+    api.saveCourseFilterPreferences.mockClear()
+    await act(async () => root.render(<AppProvider><Results results={result} /></AppProvider>))
+    await act(async () => new Promise(resolve => setTimeout(resolve, 450)))
+    expect(api.saveRoadmapProgress).not.toHaveBeenCalled()
+    expect(api.saveCourseFilterPreferences).not.toHaveBeenCalled()
+    expect(container.textContent).toContain(translations.en.beta.saveError)
   })
 })

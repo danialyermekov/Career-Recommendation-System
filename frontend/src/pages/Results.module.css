@@ -1912,19 +1912,29 @@
   }
 
   .aiFab {
-    right: 10px;
-    bottom: 12px;
-    min-height: 38px;
-    max-width: 44px;
-    overflow: hidden;
-    padding: 0 12px;
-    opacity: .7;
+    right: 14px;
+    bottom: max(16px, env(safe-area-inset-bottom, 16px));
+    min-height: 40px;
+    max-width: calc(100vw - 28px);
+    overflow: visible;
+    padding: 0 14px;
+    opacity: .95;
+    background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+    color: color-mix(in srgb, var(--accent) 92%, var(--text));
+    font-size: 0.8rem;
+    font-weight: 700;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(16px);
     transform: none;
   }
 
   .aiFab:hover,
   .aiFab:focus-visible {
-    max-width: min(260px, calc(100vw - 20px));
+    max-width: calc(100vw - 28px);
+    opacity: 1;
+    background: color-mix(in srgb, var(--accent) 18%, var(--bg-secondary));
+    border-color: var(--accent);
   }
 }
 
@@ -2175,4 +2185,164 @@
 @media (max-width: 900px) {
   .mobileActions { display: flex; gap: 10px; flex-wrap: wrap; }
   .mobileActions .actionBtn { width: auto; }
+}
+
+/* ─── Top Recommendation AI Advisor CTA ─── */
+.aiRecommendationCta {
+  margin: 16px 0 20px;
+  padding: 14px 18px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel-strong));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  transition: border-color var(--transition), background var(--transition);
+}
+
+.aiRecommendationCta:hover {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-strong));
+}
+
+.aiRecommendationCtaContent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.aiRecommendationCtaIconWrap {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-light);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.aiRecommendationCtaText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.aiRecommendationCtaTitle {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.aiRecommendationCtaSubtitle {
+  font-size: 0.78rem;
+  color: var(--text-2);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aiRecommendationCtaBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--transition);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.aiRecommendationCtaBtn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.aiCtaArrow {
+  font-size: 0.95rem;
+  transition: transform var(--transition);
+}
+
+.aiRecommendationCtaBtn:hover .aiCtaArrow {
+  transform: translateX(2px);
+}
+
+/* ─── Mobile Actions AI Button ─── */
+.actionBtnAi {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent);
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.actionBtnAi:hover {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: var(--accent);
+}
+
+/* ─── Sidebar Actions AI Button ─── */
+.actionBtnAiSidebar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition);
+  margin-bottom: 8px;
+}
+
+.actionBtnAiSidebar:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .aiRecommendationCta {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px;
+    margin: 14px 0 16px;
+  }
+  .aiRecommendationCtaSubtitle {
+    white-space: normal;
+  }
+  .aiRecommendationCtaBtn {
+    width: 100%;
+    min-height: 42px;
+    font-size: 0.85rem;
+  }
 }

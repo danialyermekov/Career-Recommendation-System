@@ -1,5 +1,7 @@
 import { useApp } from '../context/AppContext'
 import styles from './Navbar.module.css'
+import { useAuth } from '../context/AuthContext'
+import BrandLogo from './BrandLogo'
 
 const SunIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -14,14 +16,9 @@ const MoonIcon = () => (
   </svg>
 )
 
-const LogoMark = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M3 15C7 15 5 9 9 9S11 15 15 15S17 9 21 9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-)
-
 export default function Navbar({ onLogoClick }) {
   const { theme, toggleTheme, lang, setLanguage, t } = useApp()
+  const { user, loading } = useAuth()
   const languages = [
     { key: 'en', label: 'EN' },
     { key: 'ru', label: 'RU' },
@@ -31,11 +28,15 @@ export default function Navbar({ onLogoClick }) {
   return (
     <nav className={styles.nav}>
       <div className={styles.inner}>
-        <button className={styles.logo} onClick={onLogoClick} aria-label={t.nav.title}>
-          <span className={styles.logoMark}><LogoMark /></span>
-          <span className={styles.logoText}>{t.nav.title}</span>
-        </button>
+        <a className={styles.logo} href="/" onClick={event => { if (onLogoClick) { event.preventDefault(); onLogoClick() } }} aria-label={t.nav.title}>
+          <BrandLogo />
+        </a>
         <div className={styles.actions}>
+          <span className={styles.beta}>{t.beta.beta}</span>
+          <a className={styles.feedbackLink} href="/feedback">{t.product.feedbackNav}</a>
+          <a className={styles.accountLink} href={user ? '/#account' : '/#login'} onClick={() => {
+            if (!user && !['#login', '#account'].includes(window.location.hash)) sessionStorage.setItem('careerflow-auth-return', window.location.hash || window.location.pathname)
+          }}>{loading ? t.beta.loading : user ? t.beta.account : t.beta.login}</a>
           <button className={styles.iconBtn} onClick={toggleTheme} title={t.nav.themeToggle || t.nav.theme}>
             {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
           </button>

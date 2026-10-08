@@ -1,4 +1,11 @@
 import { getLLMHeaders } from './llmSettings'
+import { getAuthHeaders, getGuestHeaders } from './supabase'
+import { isDemoSession } from './demoProfile'
+
+async function authorizedFetch(url, options = {}) {
+  const { demo = false, ...init } = options
+  return fetch(url, { ...init, headers: { ...init.headers, ...demo ? getGuestHeaders() : await getAuthHeaders() } })
+}
 
 async function checkAIResponse(res) {
   if (res.ok) return
@@ -24,9 +31,10 @@ function getBaseUrl() {
 
 const BASE = getBaseUrl()
 
-export async function getRecommendation(profile) {
-  const res = await fetch(`${BASE}/recommend`, {
+export async function getRecommendation(profile, { demo = false } = {}) {
+  const res = await authorizedFetch(`${BASE}/recommend`, {
     method: 'POST',
+    demo,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(profile),
   })
@@ -35,8 +43,9 @@ export async function getRecommendation(profile) {
 }
 
 export async function sendChat(sessionId, history, message) {
-  const res = await fetch(`${BASE}/chat`, {
+  const res = await authorizedFetch(`${BASE}/chat`, {
     method: 'POST',
+    demo: isDemoSession(sessionId),
     headers: { 'Content-Type': 'application/json', ...getLLMHeaders() },
     body: JSON.stringify({
       session_id: sessionId,
@@ -49,8 +58,9 @@ export async function sendChat(sessionId, history, message) {
 }
 
 export async function sendChatStream(payload, signal) {
-  const res = await fetch(`${BASE}/chat/stream`, {
+  const res = await authorizedFetch(`${BASE}/chat/stream`, {
     method: 'POST',
+    demo: isDemoSession(payload.session_id),
     headers: { 'Content-Type': 'application/json', ...getLLMHeaders() },
     body: JSON.stringify({
       session_id: payload.session_id, message: payload.message, deep: payload.deep, lang: payload.lang,
@@ -65,7 +75,7 @@ export async function sendChatStream(payload, signal) {
 }
 
 export async function transcribeVoice(audioBlob, lang, signal) {
-  const res = await fetch(`${BASE}/voice/transcribe?lang=${encodeURIComponent(lang || 'en')}`, {
+  const res = await authorizedFetch(`${BASE}/voice/transcribe?lang=${encodeURIComponent(lang || 'en')}`, {
     method: 'POST',
     headers: { 'Content-Type': audioBlob.type || 'audio/wav', ...getLLMHeaders() },
     body: audioBlob,
@@ -78,7 +88,7 @@ export async function transcribeVoice(audioBlob, lang, signal) {
 }
 
 export async function parseResume(file) {
-  const res = await fetch(`${BASE}/parse-resume`, {
+  const res = await authorizedFetch(`${BASE}/parse-resume`, {
     method: 'POST',
     headers: {
       'Content-Type': file.type || 'application/octet-stream',
@@ -94,26 +104,27 @@ export async function parseResume(file) {
 }
 
 export async function getRecommendationHistory() {
-  const res = await fetch(`${BASE}/recommendation/history`)
+  const res = await authorizedFetch(`${BASE}/recommendation/history`)
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }
 
 export async function clearRecommendationHistory() {
-  const res = await fetch(`${BASE}/recommendation/history`, { method: 'DELETE' })
+  const res = await authorizedFetch(`${BASE}/recommendation/history`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }
 
 export async function getRecommendationState(sessionId) {
-  const res = await fetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/state`)
+  const res = await authorizedFetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/state`, { demo: isDemoSession(sessionId) })
   if (!res.ok) throw new Error(`API error: ${res.status}`)
   return res.json()
 }
 
 export async function saveRoadmapProgress(sessionId, progress) {
-  const res = await fetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/progress`, {
+  const res = await authorizedFetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/progress`, {
     method: 'PUT',
+    demo: isDemoSession(sessionId),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(progress),
   })
@@ -122,8 +133,9 @@ export async function saveRoadmapProgress(sessionId, progress) {
 }
 
 export async function saveCourseFilterPreferences(sessionId, filters) {
-  const res = await fetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/course-filters`, {
+  const res = await authorizedFetch(`${BASE}/recommendation/${encodeURIComponent(sessionId)}/course-filters`, {
     method: 'PUT',
+    demo: isDemoSession(sessionId),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filters }),
   })
@@ -132,7 +144,7 @@ export async function saveCourseFilterPreferences(sessionId, filters) {
 }
 
 export async function filterCourses(skillsGaps, filters, lang = 'en') {
-  const res = await fetch(`${BASE}/courses/filter`, {
+  const res = await authorizedFetch(`${BASE}/courses/filter`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -146,4 +158,54 @@ export async function filterCourses(skillsGaps, filters, lang = 'en') {
     throw new Error(text || `API error: ${res.status}`)
   }
   return res.json()
+}
+
+export async function submitFeedback(payload) {
+  const res = await authorizedFetch(`${BASE}/feedback`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error('Feedback failed')
+  return res.json()
+}
+
+export async function getPublicFeedback(type, offset = 0) {
+  const res = await authorizedFetch(`${BASE}/api/feedback?type=${encodeURIComponent(type)}&offset=${offset}`)
+  if (!res.ok) throw new Error('Feedback unavailable')
+  return res.json()
+}
+
+export async function voteFeedback(id, voted) {
+  const res = await authorizedFetch(`${BASE}/api/feedback/${encodeURIComponent(id)}/vote`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voted }),
+  })
+  if (!res.ok) throw new Error('Vote unavailable')
+  return res.json()
+}
+
+export async function getPublicRoadmap() {
+  const res = await fetch(`${BASE}/api/roadmap`)
+  if (!res.ok) throw new Error('Roadmap unavailable')
+  return res.json()
+}
+
+export async function deleteAccount() {
+  const res = await authorizedFetch(`${BASE}/account`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Account deletion failed')
+  return res.json()
+}
+
+export async function getTrialStatus() {
+  const response = await authorizedFetch(`${BASE}/ai/preview`, { credentials: 'include' })
+  await checkAIResponse(response)
+  return response.json()
+}
+
+export async function sendTrialMessage(sessionId, history, message, lang) {
+  const response = await authorizedFetch(`${BASE}/ai/preview`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(isDemoSession(sessionId) ? { ...getGuestHeaders(), 'X-Demo-Session': 'true' } : {}) },
+    body: JSON.stringify({ session_id: sessionId, history: history.slice(-4).map(({ role, content }) => ({ role, content: content.slice(0, 1000) })), message, lang, consent: true }),
+  })
+  await checkAIResponse(response)
+  return response.json()
 }

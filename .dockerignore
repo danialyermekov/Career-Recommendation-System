@@ -56,5 +56,7 @@ scripts
 backend/data/*.sqlite3
 backend/data/*.sqlite3-journal
 backend/data/*.sqlite3-wal
+backend/data/legacy-backups/
+backend/feedback-*.csv
 backend/data/combined_courses.csv
 backend/data/courses_combined.csv

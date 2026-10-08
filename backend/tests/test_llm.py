@@ -6,6 +6,9 @@ import httpx
 import pytest
 
 import database
+import guest_sessions
+from hashlib import sha256
+import sqlalchemy as sa
 import main
 from conftest import TEST_PROFILE
 from services.llm import LLMService
@@ -16,6 +19,11 @@ HEADERS = {"X-LLM-Provider": "gemini", "X-LLM-API-Key": KEY}
 PAYLOAD = {"session_id": "test-session", "history": [], "message": "Career advice", "deep": False}
 AI_PATHS = ["/chat", "/chat/stream", "/voice/transcribe"]
 
+
+
+@pytest.fixture(autouse=True)
+def owned_ai_session(client):
+    guest_sessions.save('test-session', sha256(('a'*64).encode()).hexdigest(), {'context': 'Recommendation context'})
 
 def post_ai(client, path, headers=None):
     if path == "/voice/transcribe":
@@ -56,7 +64,7 @@ def test_route_forwards_request_credentials_and_normalized_history(client, monke
     service.chat.return_value = "Answer"
     service.chat_stream.return_value = iter([json.dumps({"type": "text", "content": "Answer"})])
     monkeypatch.setattr(main, "llm", service)
-    main.session_store["test-session"] = "Recommendation context"
+    guest_sessions.save('test-session', sha256(('a'*64).encode()).hexdigest(), {'context': 'Recommendation context'})
     history = [{"role": "assistant", "content": "Previous answer"}]
     response = client.post(path, json={**PAYLOAD, "history": history}, headers={**HEADERS, "X-LLM-Provider": provider})
     assert response.status_code == 200
@@ -66,7 +74,7 @@ def test_route_forwards_request_credentials_and_normalized_history(client, monke
     assert call["history"] == history
     assert call["context"] == "Recommendation context"
     assert KEY not in response.text
-    assert KEY not in repr(main.session_store)
+    assert KEY not in repr(guest_sessions.sessions)
 
 
 @pytest.fixture
@@ -179,17 +187,14 @@ def test_non_ai_requests_and_serialized_history_exclude_key(client, monkeypatch,
     sdk_clients[0].return_value.__enter__.return_value.models.generate_content.return_value.text = "Career advice"
     assert client.post("/chat", json={**PAYLOAD, "session_id": session}, headers=HEADERS).status_code == 200
     assert client.get("/health").status_code == 200
-    assert client.get("/recommendation/history").status_code == 200
+    assert client.get("/recommendation/history").status_code == 401
     assert client.get(f"/recommendation/{session}/state").status_code == 200
     assert client.put(f"/recommendation/{session}/progress", json={"doneSkills": []}).status_code == 200
     assert client.put(f"/recommendation/{session}/course-filters", json={"filters": {}}).status_code == 200
     assert client.post("/parse-resume", content=b"Python and SQL", headers={"X-Filename": "resume.txt"}).status_code == 200
     with database.get_connection() as connection:
-        saved = connection.execute("SELECT profile_json, result_json, context, progress_json FROM recommendation_sessions").fetchall()
-        assert KEY not in repr([tuple(row) for row in saved])
-        assert "api_key" not in repr([tuple(row) for row in saved]).lower()
-    assert KEY not in result.text
-    assert KEY not in repr(main.session_store)
+        assert connection.scalar(sa.select(sa.func.count()).select_from(database.sessions)) == 0
+    assert KEY not in repr(guest_sessions.sessions)
 
 
 def test_cors_allows_ai_headers_without_credentials(client):

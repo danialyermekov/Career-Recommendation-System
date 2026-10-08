@@ -1,6 +1,18 @@
 from pathlib import Path
+import os
+from dotenv import load_dotenv, dotenv_values
 
 BASE_DIR = Path(__file__).parent
+load_dotenv(BASE_DIR / '.env', override=False)
+SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
+# Local React configuration contains public values only; Compose passes this explicitly.
+SUPABASE_PUBLISHABLE_KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY') or os.getenv('REACT_APP_SUPABASE_PUBLISHABLE_KEY') or dotenv_values(
+    BASE_DIR.parent / 'frontend' / '.env'
+).get('REACT_APP_SUPABASE_PUBLISHABLE_KEY', '')
+SUPABASE_SECRET_KEY = os.getenv('SUPABASE_SECRET_KEY') or os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
+DATABASE_URL = os.getenv('DATABASE_URL', '')
+CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'https://careerflow.live,http://localhost:3000,http://127.0.0.1:3000').split(',')
+DEVELOPER_USER_IDS = {value.strip() for value in os.getenv('DEVELOPER_SUPABASE_USER_IDS', '').split(',') if value.strip()}
 MODELS_DIR = BASE_DIR / 'models'
 DATA_DIR   = BASE_DIR / 'data'
 DB_PATH    = DATA_DIR / 'career_advisor.sqlite3'

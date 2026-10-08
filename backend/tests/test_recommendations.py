@@ -29,10 +29,13 @@ The expected_top2 flag marks cases where top-2 membership is
 acceptable, matching the accept criterion in test_top_profession_matches_expected.
 """
 
+import os
+import secrets
 import httpx
 import pytest
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = os.getenv("CAREERFLOW_TEST_API_URL", "http://localhost:8000")
+GUEST_HEADERS = {"X-Guest-Token": secrets.token_hex(32)}
 
 # ─────────────────────────────────────────────
 # TIER 1 — Clear profiles (one per profession)
@@ -278,7 +281,7 @@ ALL_LABELED_PROFILES = CLEAR_PROFILES + BORDERLINE_PROFILES + EDGE_PROFILES
 
 @pytest.mark.parametrize("profile, expected, top2_ok", ALL_LABELED_PROFILES)
 def test_top_profession_matches_expected(profile, expected, top2_ok):
-    r = httpx.post(f"{BASE_URL}/recommend", json=profile, timeout=30)
+    r = httpx.post(f"{BASE_URL}/recommend", json=profile, headers=GUEST_HEADERS, timeout=30)
     assert r.status_code == 200, f"API error: {r.text}"
 
     data   = r.json()
@@ -307,7 +310,7 @@ def test_top_profession_matches_expected(profile, expected, top2_ok):
 def test_response_has_all_required_fields():
     """Smoke test: verify response schema on a minimal profile."""
     profile = CLEAR_PROFILES[0][0]
-    r = httpx.post(f"{BASE_URL}/recommend", json=profile, timeout=30)
+    r = httpx.post(f"{BASE_URL}/recommend", json=profile, headers=GUEST_HEADERS, timeout=30)
     assert r.status_code == 200
     data = r.json()
     for field in ["top_profession", "alternative_profession",
@@ -325,7 +328,7 @@ def test_all_professions_appear_in_scores():
         "Machine Learning Engineer", "Software Engineer",
     }
     profile = CLEAR_PROFILES[0][0]
-    r = httpx.post(f"{BASE_URL}/recommend", json=profile, timeout=30)
+    r = httpx.post(f"{BASE_URL}/recommend", json=profile, headers=GUEST_HEADERS, timeout=30)
     data = r.json()
     returned = set(data["final_scores"].keys())
     assert expected_profs == returned, f"Score keys mismatch: {returned ^ expected_profs}"
@@ -334,7 +337,7 @@ def test_all_professions_appear_in_scores():
 def test_scores_sum_sanity():
     """Final scores must all be in [0, 1] (post min-max normalization)."""
     profile = CLEAR_PROFILES[2][0]
-    r = httpx.post(f"{BASE_URL}/recommend", json=profile, timeout=30)
+    r = httpx.post(f"{BASE_URL}/recommend", json=profile, headers=GUEST_HEADERS, timeout=30)
     data = r.json()
     for prof, score in data["final_scores"].items():
         assert 0.0 <= score <= 1.0, f"{prof} score {score} outside [0,1]"
@@ -352,7 +355,7 @@ def test_roadmap_lists_missing_skills():
         "networking": 0, "communication": 1, "leadership": 0,
         "problem_solving": 1, "teamwork": 1, "adaptability": 1,
     }
-    r = httpx.post(f"{BASE_URL}/recommend", json=profile, timeout=30)
+    r = httpx.post(f"{BASE_URL}/recommend", json=profile, headers=GUEST_HEADERS, timeout=30)
     data = r.json()
     roadmap = data.get("roadmap_with_courses", {})
     total_missing = sum(len(v) for v in roadmap.values())

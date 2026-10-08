@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 __pycache__/
+*.egg-info/
 *.py[cod]
 .pytest_cache/
 backend/data/*.sqlite3*

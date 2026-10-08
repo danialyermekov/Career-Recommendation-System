@@ -1,4 +1,3 @@
-import { useRef } from 'react'
 import { useApp } from '../context/AppContext'
 import styles from './Hero.module.css'
 
@@ -8,9 +7,9 @@ const features = [
   { icon: '03', key: 2 },
 ]
 
-export default function Hero({ onStart, onDemo }) {
+export default function Hero({ onStart, onDemo, demoLoading = false }) {
   const { t, lang } = useApp()
-  const privacyDialog = useRef(null)
+
   const metrics = [
     { value: '7', label: t.hero.metrics?.[0] || 'career tracks' },
     { value: t.hero.noAiKey, label: t.hero.metrics[1], text: true },
@@ -65,7 +64,7 @@ export default function Hero({ onStart, onDemo }) {
             <polyline points="12 5 19 12 12 19"/>
           </svg>
         </button>
-        <button className={styles.secondaryCta} onClick={onDemo}>{t.review.demo}</button>
+        <button className={styles.secondaryCta} onClick={onDemo} disabled={demoLoading}>{t.experience.liveDemo}</button>
         </div>
 
         <a className={styles.scrollCue} href="#how-it-works">
@@ -150,25 +149,12 @@ export default function Hero({ onStart, onDemo }) {
       <section className={`${styles.explainerSection} ${styles.finalCta}`}>
         <h2>{t.review.ctaTitle}</h2><p>{t.review.ctaText}</p>
         <div className={styles.ctaGroup}>
-          <button className={styles.cta} onClick={onDemo}>{t.review.demo}</button>
+          <button className={styles.cta} onClick={onDemo} disabled={demoLoading}>{t.experience.liveDemo}</button>
           <button className={styles.secondaryCta} onClick={onStart}>{t.review.start}</button>
         </div>
-        <p className={styles.contextNote}>{t.review.aiNote}</p>
+        <p className={styles.contextNote}>{t.experience.byokText}</p>
       </section>
-      <footer className={styles.footer}>
-        <span>© 2026 CareerFlow</span>
-        <nav aria-label={t.footer.links}>
-          <a href="https://careerflow.live">careerflow.live</a>
-          <button type="button" onClick={() => privacyDialog.current.showModal()}>{t.footer.privacy}</button>
-        </nav>
-      </footer>
-      <dialog ref={privacyDialog} className={styles.privacyDialog} aria-labelledby="privacy-title">
-        <div className={styles.privacyHeader}>
-          <h2 id="privacy-title">{t.footer.privacy}</h2>
-          <form method="dialog"><button type="submit">{t.footer.close}</button></form>
-        </div>
-        {t.footer.paragraphs.map(text => <p key={text}>{text}</p>)}
-      </dialog>
+
     </div>
     </>
   )

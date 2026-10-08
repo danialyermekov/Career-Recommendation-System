@@ -1,0 +1,42 @@
+{
+  "origin": "https://careerflow.live",
+  "image": "https://careerflow.live/careerflow-og.png",
+  "pages": {
+    "/": {
+      "title": "CareerFlow | Personalized IT Career Recommendations",
+      "description": "Explore IT career paths with personalized recommendations, skill-gap analysis, and learning roadmaps based on your skills and background."
+    },
+    "/about": {
+      "title": "About CareerFlow | How Our Career Recommendations Work",
+      "description": "Learn how CareerFlow combines machine learning, skill matching, and historical job market signals to help students explore IT career paths."
+    },
+    "/feedback": {
+      "title": "Feedback & Ideas | CareerFlow",
+      "description": "Share your experience with CareerFlow, suggest new features, report issues, and explore approved community feedback."
+    },
+    "/changelog": {
+      "title": "What's New | CareerFlow Updates",
+      "description": "Explore the latest verified improvements, features, and fixes released for CareerFlow."
+    },
+    "/roadmap": {
+      "title": "Product Roadmap | CareerFlow",
+      "description": "See available features and planned improvements to CareerFlow's career guidance and personalized learning tools."
+    },
+    "/privacy": {
+      "title": "Privacy Policy | CareerFlow",
+      "description": "Read how CareerFlow handles account information, recommendations, roadmap progress, feedback and optional AI provider keys."
+    },
+    "/terms": {
+      "title": "Terms of Service | CareerFlow",
+      "description": "Read the terms for using CareerFlow's exploratory career guidance, learning roadmaps and optional AI Advisor, including their limitations."
+    },
+    "/contact": {
+      "title": "Contact | CareerFlow",
+      "description": "Contact CareerFlow maintainer Danial Yermekov about the project, feedback or privacy through email, GitHub or LinkedIn."
+    },
+    "/disclaimer": {
+      "title": "Career Guidance Disclaimer | CareerFlow",
+      "description": "Understand CareerFlow's limitations: exploratory rankings, historical market estimates, external course information and optional AI advice."
+    }
+  }
+}

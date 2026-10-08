@@ -13,7 +13,7 @@ const safeSave = (key, val) => {
   try { localStorage.setItem(key, val) } catch {}
 }
 
-export function AppProvider({ children }) {
+export function AppProvider({ children, initialLanguage }) {
   // Only public metadata enters React context; the secret stays in module memory.
   const [llmProvider, setLLMProvider] = useState(() => getLLMSettings()?.provider || null)
   useEffect(() => {
@@ -25,7 +25,8 @@ export function AppProvider({ children }) {
   }, [])
   const [theme, setTheme] = useState(() => safeGet('theme', 'dark'))
   const [lang,  setLang]  = useState(() => {
-    const browserLang = navigator.language?.split('-')[0]
+    if (initialLanguage) return initialLanguage
+    const browserLang = typeof navigator !== 'undefined' ? navigator.language?.split('-')[0] : 'en'
     const stored = safeGet('lang', translations[browserLang] ? browserLang : 'en')
     return translations[stored] ? stored : 'ru'
   })

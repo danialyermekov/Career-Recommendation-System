@@ -1,3 +1,7 @@
+sqlalchemy<3,>=2.0
+alembic<2,>=1.14
+psycopg[binary]<4,>=3.2
+httpx<1,>=0.27
 anthropic>=0.84.0
 catboost>=1.2.10
 fastapi>=0.136.1

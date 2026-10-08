@@ -1,9 +1,13 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
+import Feedback from '../components/Feedback'
 import styles from './Results.module.css'
 import { getScoreBreakdown, formatMatchScore, formatMatchPoints } from '../utils/scoring'
 import { isDemoSession } from '../utils/demoProfile'
 import LLMSettings from '../components/LLMSettings'
+import GuidedTour from '../components/GuidedTour'
+import FreePreview from '../components/FreePreview'
 import { LLM_PROVIDERS, LLM_SETTINGS_EVENT } from '../utils/llmSettings'
 import {
   clearRecommendationHistory,
@@ -750,7 +754,7 @@ function ExplainabilityPanel({ profession, profLabel, t, skillExplanation }) {
   if (!profession) return null
 
   return (
-    <section className={styles.explainCard}>
+    <section className={styles.explainCard} data-tour-detail="explanation">
       <div className={styles.compareHeader}>
         <span>{t.results.explainability}</span>
         <small>{t.results.featureImportance}</small>
@@ -1512,12 +1516,22 @@ function ScoringFormulaHeader({ results, profession, t }) {
 }
 
 /* ─── Main Component ─────────────────────────────────────────── */
-export default function Results({ results: initialResults, formData, onBack, onRetry, onNewAnalysis, onHistorySelect }) {
+export default function Results({ results: initialResults, formData, onBack, onRetry, onNewAnalysis, onHistorySelect, openAdvisor = false }) {
   const { t, lang, llmProvider } = useApp()
+  const { user } = useAuth()
+  const [stateLoaded, setStateLoaded] = useState(false)
+  const [persistenceError, setPersistenceError] = useState(false)
   const voiceSupported = LLM_PROVIDERS.find(p => p.id === llmProvider)?.voice
 
   const [results,      setResults]      = useState(initialResults)
   const [tab,          setTab]          = useState('best')
+  const [tourStep, setTourStep] = useState(initialResults._guided ? 0 : null)
+  const [advisorMode, setAdvisorMode] = useState(llmProvider ? 'byok' : 'preview')
+  const changeTourStep = step => {
+    setTourStep(step)
+    setTab(step === 2 ? 'all' : step === 3 ? 'roadmap' : 'best')
+    if (step === 0 || step === 1) setSelectedProf(null)
+  }
   const [doneSkills, setDoneSkills] = useState(new Set())
   const [sortBy,       setSortBy]       = useState('score')
   const [selectedProf, setSelectedProf] = useState(null)
@@ -1528,7 +1542,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const [deepMode,     setDeepMode]     = useState(false)
   const [copied,       setCopied]       = useState(null)
   const [leftOpen,     setLeftOpen]     = useState(true)
-  const [rightOpen,    setRightOpen]    = useState(false)
+  const [rightOpen,    setRightOpen]    = useState(openAdvisor)
+  useEffect(() => { if (openAdvisor) setRightOpen(true) }, [openAdvisor])
   const [pdfLoading,   setPdfLoading]   = useState(false)
   const [openCats,     setOpenCats]     = useState(new Set())
   const [cardKey,      setCardKey]      = useState(0)
@@ -1545,6 +1560,40 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const [courseFilters, setCourseFilters] = useState(COURSE_FILTER_DEFAULTS)
   const [filteredRoadmap, setFilteredRoadmap] = useState(null)   // ← overrides rawRoadmap courses when filters are active
   const [filterLoading,  setFilterLoading]  = useState(false)
+
+  const aiCtaInfo = useMemo(() => {
+    if (llmProvider === 'anthropic') {
+      return {
+        button: t.results.askClaude || 'Ask Claude',
+        buttonFull: t.results.askClaudeRecommendation || 'Ask Claude about this recommendation',
+        title: t.results.aiCtaTitle || 'Have questions about this recommendation?',
+        subtitle: t.results.aiCtaSubtitle || 'Discuss career growth, skill gaps, or learning steps with your personal assistant.',
+      }
+    }
+    if (llmProvider === 'gemini') {
+      return {
+        button: t.results.askGemini || 'Ask Gemini',
+        buttonFull: t.results.askGeminiRecommendation || 'Ask Gemini about this recommendation',
+        title: t.results.aiCtaTitle || 'Have questions about this recommendation?',
+        subtitle: t.results.aiCtaSubtitle || 'Discuss career growth, skill gaps, or learning steps with your personal assistant.',
+      }
+    }
+    return {
+      button: t.results.askAi || 'Ask AI Advisor',
+      buttonFull: t.results.askAiRecommendation || 'Ask AI Advisor about this recommendation',
+      title: t.results.aiCtaTitle || 'Have questions about this recommendation?',
+      subtitle: t.results.aiCtaSubtitle || 'Discuss career growth, skill gaps, or learning steps with your personal assistant.',
+    }
+  }, [llmProvider, t])
+
+  const handleOpenAiAdvisor = () => {
+    setRightOpen(true)
+    setTimeout(() => {
+      if (textareaRef?.current) {
+        textareaRef.current.focus()
+      }
+    }, 200)
+  }
 
   const messagesEndRef = useRef(null)
   const greetedRef     = useRef(false)
@@ -1715,15 +1764,8 @@ export default function Results({ results: initialResults, formData, onBack, onR
     setDoneSkills(new Set())
     setCourseFilters(COURSE_FILTER_DEFAULTS)
     let cancelled = false
-    const applyLocalFallback = () => {
-      try {
-        const saved = JSON.parse(localStorage.getItem(resultStorageKey) || '{}')
-        if (Array.isArray(saved.doneSkills)) setDoneSkills(new Set(saved.doneSkills))
-        if (Array.isArray(saved.categoryOrder)) setCategoryOrder(saved.categoryOrder)
-        if (saved.skillOrders) setSkillOrders(saved.skillOrders)
-        if (saved.courseFilters) setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...saved.courseFilters })
-      } catch {}
-    }
+    setStateLoaded(false)
+    setPersistenceError(false)
     if (results.session_id) {
       getRecommendationState(results.session_id)
         .then(state => {
@@ -1736,57 +1778,43 @@ export default function Results({ results: initialResults, formData, onBack, onR
           if (state.filters && Object.keys(state.filters).length) {
             setCourseFilters({ ...COURSE_FILTER_DEFAULTS, ...state.filters })
           }
+          setStateLoaded(true)
         })
-        .catch(applyLocalFallback)
+        .catch(() => { if (!cancelled) setPersistenceError(true) })
     } else {
-      applyLocalFallback()
+      setStateLoaded(true)
     }
     return () => { cancelled = true }
   }, [resultStorageKey])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(resultStorageKey, JSON.stringify({
-        doneSkills: Array.from(doneSkills),
-        categoryOrder,
-        skillOrders,
-        courseFilters,
-      }))
-    } catch {}
-  }, [doneSkills, categoryOrder, skillOrders, courseFilters, resultStorageKey])
-
-  useEffect(() => {
-    if (!results.session_id) return
+    if (!results.session_id || !stateLoaded) return
     const timer = setTimeout(() => {
       saveRoadmapProgress(results.session_id, {
         doneSkills: Array.from(doneSkills),
         categoryOrder,
         skillOrders,
         selectedProfession: activeProfName,
-      }).catch(() => {})
+      }).catch(() => setPersistenceError(true))
     }, 350)
     return () => clearTimeout(timer)
-  }, [doneSkills, categoryOrder, skillOrders, activeProfName, results.session_id])
+  }, [doneSkills, categoryOrder, skillOrders, activeProfName, results.session_id, stateLoaded])
 
   useEffect(() => {
-    if (!results.session_id) return
+    if (!results.session_id || !stateLoaded) return
     const timer = setTimeout(() => {
-      saveCourseFilterPreferences(results.session_id, courseFilters).catch(() => {})
+      saveCourseFilterPreferences(results.session_id, courseFilters).catch(() => setPersistenceError(true))
     }, 350)
     return () => clearTimeout(timer)
-  }, [courseFilters, results.session_id])
+  }, [courseFilters, results.session_id, stateLoaded])
 
   useEffect(() => {
-    getRecommendationHistory()
-      .then(data => setHistory(data.items || []))
-      .catch(() => {
-        try {
-          setHistory(JSON.parse(localStorage.getItem('career-recommendation-history') || '[]'))
-        } catch {
-          setHistory([])
-        }
-      })
-  }, [])
+    if (!user) { setHistory([]); return }
+    let active = true
+    getRecommendationHistory().then(data => { if (active) setHistory(data.items || []) })
+      .catch(() => { if (active) setHistory([]) })
+    return () => { active = false }
+  }, [user])
 
   useEffect(() => {
     const onKey = e => {
@@ -2076,7 +2104,6 @@ export default function Results({ results: initialResults, formData, onBack, onR
     const next = [entry, ...history.filter(item => item.results?.session_id !== results.session_id && item.id !== entry.id)].slice(0, 12)
     setHistory(next)
     setSavedCurrent(true)
-    try { localStorage.setItem('career-recommendation-history', JSON.stringify(next)) } catch {}
     if (results.session_id) {
       saveRoadmapProgress(results.session_id, {
         doneSkills: Array.from(doneSkills),
@@ -2111,7 +2138,6 @@ export default function Results({ results: initialResults, formData, onBack, onR
   const clearHistory = () => {
     if (!window.confirm(t.review.clearHistoryConfirm)) return
     setHistory([])
-    try { localStorage.removeItem('career-recommendation-history') } catch {}
     clearRecommendationHistory().catch(() => {})
   }
 
@@ -2465,11 +2491,11 @@ export default function Results({ results: initialResults, formData, onBack, onR
     <div className={layoutClass} style={{ '--chat-w': `${chatSize.width}px` }}>
       {rightOpen && <button className={styles.chatOverlay} onClick={() => setRightOpen(false)} aria-label={t.results.closeAiPanel} />}
       {!rightOpen && (
-        <button className={styles.aiFab} onClick={() => setRightOpen(true)}>
+        <button className={styles.aiFab} onClick={handleOpenAiAdvisor}>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
-          {t.results.openAiPanel}
+          {aiCtaInfo.button}
         </button>
       )}
       {/* ─ LEFT TOGGLE ─ */}
@@ -2591,7 +2617,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
         <div className={styles.sidebarSection}>
           <div className={styles.sidebarLabel}>{t.results.historyTitle}</div>
-          <p className={styles.historyNote}>{t.review.historyNote}</p>
+          <p className={styles.historyNote}>{t.beta.historyNote}</p>
           {history.length === 0 ? (
             <div className={styles.sidebarEmpty}>{t.results.noHistory}</div>
           ) : (
@@ -2603,10 +2629,16 @@ export default function Results({ results: initialResults, formData, onBack, onR
         </div>
 
         <div className={styles.sidebarActions}>
+          <button type="button" className={styles.actionBtnAiSidebar} onClick={handleOpenAiAdvisor}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            {aiCtaInfo.button}
+          </button>
           <div style={{ marginBottom: 6, fontSize: '0.72rem', color: 'var(--text-3)', lineHeight: 1.35 }}>
-            {t.review.sharedSaveWarning || t.review.historyNote}
+            {user ? t.beta.historyNote : t.beta.guestNote}
           </div>
-          <button className={styles.actionBtn} onClick={saveCurrentResult}>
+          <button className={styles.actionBtn} disabled={!user || results.persistent === false || results._isDemo || !stateLoaded} onClick={saveCurrentResult}>
             <CheckIcon size={12}/>
             {savedCurrent ? t.results.savedResult : t.results.saveResult}
           </button>
@@ -2643,10 +2675,20 @@ export default function Results({ results: initialResults, formData, onBack, onR
       {/* ─ MAIN ─ */}
       <main className={styles.main}>
         <header className={styles.resultsIntro}>
+          <div data-tour-slot="continue" />
           <h1>{t.results.title}</h1>
           {(results._isDemo || isDemoSession(results.session_id)) && <span className={styles.demoBadge}>{t.review.demoLabel}</span>}
           <p>{t.review.scoreNote}</p>
+          {persistenceError && <p role="alert">{t.beta.saveError}</p>}
+          {!user && <p>{t.beta.guestNote} <a href="#login">{t.beta.login}</a></p>}
+          {(results._isDemo || isDemoSession(results.session_id)) && <p>{t.experience.temporary}</p>}
           <div className={styles.mobileActions}>
+            <button type="button" className={styles.actionBtnAi} onClick={handleOpenAiAdvisor}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+              {aiCtaInfo.button}
+            </button>
             <button className={styles.actionBtn} onClick={onRetry || onBack}>{t.results.newAnalysis}</button>
             <button className={styles.actionBtn} onClick={handleExportPdf} disabled={pdfLoading}>{t.results.downloadPdf}</button>
           </div>
@@ -2666,7 +2708,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
 
           {/* ─ BEST MATCH ─ */}
           {tab === 'history' && <section className={styles.bestCard}>
-            <h2>{t.results.historyTitle}</h2><p className={styles.methodNote}>{t.review.historyNote}</p>
+            <h2>{t.results.historyTitle}</h2><p className={styles.methodNote}>{t.beta.historyNote}</p>
             {history.length ? renderHistory(history) : <p>{t.results.noHistory}</p>}
           </section>}
           {tab === 'best' && activeProf && (() => {
@@ -2675,6 +2717,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
             return (
               <div className={styles.bestStack}>
               <div className={styles.bestCard}>
+                <div data-tour-slot="recommendation" />
                 <div className={styles.bestHeader}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                     <ProgressRing value={activeProf.final_score ?? 0} size={72} stroke={5}
@@ -2704,6 +2747,34 @@ export default function Results({ results: initialResults, formData, onBack, onR
                   </div>
                 </div>
 
+                <div className={styles.aiRecommendationCta}>
+                  <div className={styles.aiRecommendationCtaContent}>
+                    <div className={styles.aiRecommendationCtaIconWrap}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                      </svg>
+                    </div>
+                    <div className={styles.aiRecommendationCtaText}>
+                      <span className={styles.aiRecommendationCtaTitle}>
+                        {aiCtaInfo.title}
+                      </span>
+                      <span className={styles.aiRecommendationCtaSubtitle}>
+                        {aiCtaInfo.subtitle}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={styles.aiRecommendationCtaBtn}
+                    onClick={handleOpenAiAdvisor}
+                    aria-label={aiCtaInfo.buttonFull}
+                  >
+                    <span>{aiCtaInfo.buttonFull}</span>
+                    <span className={styles.aiCtaArrow}>→</span>
+                  </button>
+                </div>
+
+                <div data-tour-slot="explanation" />
                 <ScoringFormulaHeader results={results} profession={activeProf.name} t={t} />
                 {viewMode === 'bars' && (
                   <div className={styles.chartStack}>
@@ -2760,6 +2831,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
           {/* ─ ALL PROFESSIONS ─ */}
           {tab === 'all' && (
             <>
+              <div data-tour-slot="comparison" />
               <div className={styles.sortBar}>
                 <span className={styles.sortLabel}>{t.results.sortBy}</span>
                 {SORT_OPTIONS.map(({ key, label }) => (
@@ -2810,6 +2882,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
           {/* ─ ROADMAP ─ */}
           {tab === 'roadmap' && (
   <>
+    <div data-tour-slot="roadmap" />
     <p className={styles.roadmapHint}>
       {t.results.skillsToLearn} <strong>{profLabel(activeProfName)}</strong>
     </p>
@@ -2968,6 +3041,7 @@ export default function Results({ results: initialResults, formData, onBack, onR
   </>
 )}
         </div>
+        <Feedback sessionId={results.session_id} />
       </main>
 
       {/* ─ RIGHT CHAT ─ */}
@@ -2987,6 +3061,12 @@ export default function Results({ results: initialResults, formData, onBack, onR
           </button>
         </div>
 
+        <div className="advisorModes" aria-label={t.results.chatTitle}>
+          <button aria-pressed={advisorMode === 'preview'} onClick={() => setAdvisorMode('preview')}>{t.experience.free}</button>
+          <button aria-pressed={advisorMode === 'byok'} onClick={() => setAdvisorMode('byok')}>{t.experience.byok}</button>
+        </div>
+        {advisorMode === 'preview' ? <FreePreview sessionId={results.session_id} /> : <>
+        <p className="byokDescription">{t.experience.byokText}</p>
         <LLMSettings />
         <div className={styles.chatMessages}>
           {!llmProvider && <div className={styles.chatEmpty} role="status">{t.llm.noKey}</div>}
@@ -3106,8 +3186,11 @@ export default function Results({ results: initialResults, formData, onBack, onR
             </button>
           </div>
         </div>
+        </>}
       </aside>
       )}
+
+      {tourStep !== null && <GuidedTour step={tourStep} onStep={changeTourStep} onClose={() => setTourStep(null)} onAdvisor={handleOpenAiAdvisor} location={tab} />}
 
       {/* ─ COURSE MODAL ─ */}
       {activeCourse && (

@@ -1,8 +1,27 @@
 # CareerFlow
 
-Career guidance for IT students choosing a direction, with an optional AI advisor. The application ranks supported IT careers using profile classification, skill similarity and historical market signals, explains the ranking, and builds a rule-based learning roadmap with courses. Public product URL: https://careerflow.live.
+CareerFlow helps IT students choose a career direction. The application ranks supported IT careers using profile classification, skill similarity and historical market signals, explains the ranking, and builds a rule-based learning roadmap with courses. CareerFlow supports Claude and Gemini through user-provided API keys. A limited free AI preview is available through Gemini when enabled by the maintainer; the core recommendations and roadmap work without an AI API key.
 
-## Authors
+CareerFlow is currently developed and maintained by **Danial Yermekov**.
+
+- **Website:** [https://careerflow.live](https://careerflow.live)
+- **GitHub:** [https://github.com/danialyermekov/Career-Recommendation-System](https://github.com/danialyermekov/Career-Recommendation-System)
+- **Current maintainer:** Danial Yermekov
+- **LinkedIn:** [https://www.linkedin.com/in/danial-yermekov/](https://www.linkedin.com/in/danial-yermekov/)
+- **Contact:** [contact@careerflow.live](mailto:contact@careerflow.live)
+- **Project started:** 2026
+- **Status:** Public MVP, actively developed.
+
+The public MVP launched on 7 October 2026. The v1.1 changes described in this repository are a release candidate; deployment has not been confirmed. Private accounts, PostgreSQL persistence and moderated public feedback require the candidate deployment and its release checks.
+
+For the guided demo, Gemini preview configuration, quota limits and manual release gates, see [guided-demo-ai-preview.md](docs/guided-demo-ai-preview.md).
+For v1.1 configuration, safe migration, release gates and rollback, see [deployment-v1.1.md](docs/deployment-v1.1.md).
+For public pages, consent-based feedback, voting, exact moderation commands and verified changelog sources, see [public-product-pages.md](docs/public-product-pages.md).
+For prerendered public HTML, technical SEO and owner steps for DNS verification/indexing, see [google-search-console.md](docs/google-search-console.md).
+
+## Contributors
+
+The original project authors are:
 
 | Name | GitHub |
 | --- | --- |
@@ -22,8 +41,10 @@ The system helps students choose an IT career direction by combining:
 - personalized roadmaps with course recommendations;
 - advanced course filtering by certificate, price, language, platform, and level;
 - skill-level explainability with SHAP or fallback feature-importance logic;
-- persistent recommendation history and roadmap progress in SQLite;
-- optional Claude or Gemini AI advisor chat with a user-provided session key.
+- private recommendation history and roadmap progress in Supabase PostgreSQL;
+- optional Claude or Gemini AI advisor chat with a user-provided session key;
+- a guided live demo using the real recommendation pipeline, with temporary progress;
+- an optional three-message Gemini preview with PostgreSQL quotas and server-side cost limits.
 
 The app does not only return a single top profession. It shows all supported career tracks and lets the student compare scores, skill gaps, market signals, and roadmap requirements.
 
@@ -74,7 +95,7 @@ The raw profile file contains 2,000 rows. The training preparation adds syntheti
 
 The course catalog contains 41,690 rows in `backend/data/all_courses.csv`, not a verified count of distinct, currently available courses. Price, availability and rating freshness are unverified. The public hero does not advertise this count. The roadmap uses normalized skill gaps, category limits and framework/language compatibility rules; progress counts user-marked learning steps.
 
-Navigation uses URL hashes (`#profile`, `#results/<session_id>`) without adding a router. A saved result can reload through the existing state API. Recommendation history is currently shared by the single anonymous `demo` account; the UI labels it accordingly and differentiates runs by timestamp, skill count and identifier. Private history, authentication, access control and dataset licensing need a separate review before broader production use.
+Navigation uses URL hashes (`#profile`, `#results/<session_id>`) without adding a router. A saved result can reload through the existing state API. Supabase Auth provides Google/GitHub sign-in. Each saved result belongs to its verified user; guest results require a separate random credential and expire after two hours or a server restart. Guest history is never imported into an account automatically. Dataset licensing and the documented infrastructure/privacy review items remain separate release concerns.
 
 Backend services:
 
@@ -133,21 +154,21 @@ The frontend shows:
 
 When the user selects another profession, the explanation panel updates for that selected profession.
 
-### SQLite Persistence
+### PostgreSQL Persistence
 
-The project uses local SQLite storage:
+The project uses the existing Supabase PostgreSQL database through SQLAlchemy Core, psycopg 3 and Alembic. Tables live in the private `careerflow` schema. The previous SQLite file is retained only for a read-only archival migration:
 
 ```text
 backend/data/career_advisor.sqlite3
 ```
 
-The database is initialized automatically on backend startup. It is ignored by git and Docker build context.
+Schema changes run explicitly with `uv run alembic upgrade head`; startup does not create or reset tables. UUID account IDs reference Supabase Auth users with cascading deletion. Application tables have RLS enabled and no browser-role permissions. The legacy SQLite file remains ignored by Git and Docker context; it is not imported into new accounts.
 
 Current tables:
 
 | Table | Purpose |
 | --- | --- |
-| `users` | Local/demo user record, ready for future authentication |
+| `users` | Verified Supabase Auth identity, display name, deletion status and timestamps |
 | `recommendation_sessions` | Recommendation payloads, profile JSON, LLM context, progress JSON |
 | `specialization_scores` | Final, classifier, skill, trend, market, vacancy scores per profession |
 | `skill_gaps` | Full and missing skills by profession/category |
@@ -155,7 +176,7 @@ Current tables:
 | `course_progress` | Per-course progress placeholders |
 | `course_filter_preferences` | Saved filter state per recommendation session |
 
-There is no full authentication yet. Data is saved for a demo user (`demo`) so the architecture can later be extended to real user accounts.
+Google/GitHub OAuth uses Supabase Auth and PKCE. The backend verifies Bearer tokens through Supabase Auth and scopes every private session operation to the verified user. Feedback defaults to private and pending; only explicitly consented, approved reviews/features with maintainer-classified origin have a public listing. Feature votes require authentication. See [deployment and migration instructions](docs/deployment-v1.1.md) and the [moderation workflow](docs/public-product-pages.md).
 
 ### Visual Analytics
 
@@ -180,7 +201,7 @@ Roadmap features:
 - completed steps section;
 - roadmap progress bar;
 - skill dependency tree with prerequisites and next recommended step;
-- persistence through SQLite with localStorage fallback.
+- PostgreSQL persistence for signed-in users; temporary session-scoped memory for guests.
 
 ### AI Advisor
 
@@ -245,7 +266,7 @@ FastAPI backend
         |-- LightGBM demand model -> trend and market-share scores
         |-- Roadmap engine -> skill gaps
         |-- Course finder -> filtered course metadata from all_courses.csv
-        |-- SQLite database -> history, scores, gaps, roadmap progress, filter preferences
+        |-- Supabase PostgreSQL -> private history, scores, gaps, progress, filters, feedback
         |-- PyMuPDF parser -> resume skills and role extraction
         |-- Claude / Gemini LLM service -> optional AI advisor
         |
@@ -266,7 +287,8 @@ React frontend
 | Layer | Tools |
 | --- | --- |
 | Backend | Python, FastAPI, Uvicorn, Pydantic |
-| Database | SQLite, lightweight custom data-access layer |
+| Database | Supabase PostgreSQL, SQLAlchemy Core, Alembic, psycopg 3 |
+| Authentication | Supabase Auth, Google/GitHub OAuth with PKCE |
 | ML | CatBoost, LightGBM, scikit-learn, pandas, NumPy, joblib |
 | Resume parsing | PyMuPDF |
 | Frontend | React, Framer Motion, CSS Modules |
@@ -282,7 +304,7 @@ Career-Recommendation-System/
 │   ├── data/
 │   │   ├── all_courses.csv              # Course catalog with prices
 │   │   ├── vacancy_data.csv             # Demand dataset
-│   │   └── career_advisor.sqlite3       # Local runtime DB, gitignored
+│   │   └── career_advisor.sqlite3       # Legacy archive source, gitignored
 │   ├── models/                          # Serialized ML models and profiles
 │   ├── services/
 │   │   ├── classifier.py                # CatBoost scoring and SHAP/fallback explainability
@@ -292,7 +314,7 @@ Career-Recommendation-System/
 │   │   ├── resume_parser.py             # Resume parser
 │   │   └── skill_matcher.py             # Skill matching
 │   ├── tests/                           # Backend tests
-│   ├── database.py                      # SQLite schema and persistence layer
+│   ├── database.py                      # Private PostgreSQL schema and persistence layer
 │   ├── main.py                          # FastAPI routes
 │   ├── roadmap.py                       # Roadmap generation
 │   ├── schemas.py                       # Pydantic schemas
@@ -315,6 +337,8 @@ Career-Recommendation-System/
 
 ## Quick Start With Docker
 
+Configure both `.env` files from their examples first. React Supabase values are build-time arguments, not runtime-only settings. Preserve the current image and SQLite backup; promote v1.1 only after authorization tests, candidate smoke tests and real OAuth checks pass.
+
 Docker is the recommended way to run the whole app because the ML dependencies are heavy and pre-compiled in a two-stage reproducible build.
 
 ### Production Container Build & Run
@@ -322,13 +346,14 @@ Docker is the recommended way to run the whole app because the ML dependencies a
 1. Build the production image:
 
 ```bash
-docker build -t careerflow:local .
+docker compose --env-file frontend/.env build app
+docker compose --env-file frontend/.env run --rm --no-deps app alembic upgrade head
 ```
 
 2. Run the single container (example using local port `18002` or `8000`):
 
 ```bash
-docker run --rm --name careerflow-local -p 18002:8000 careerflow:local
+docker run --rm --name careerflow-local --env-file backend/.env --env-file frontend/.env -p 127.0.0.1:18002:8000 career-recommendation-system-app
 ```
 
 3. Access the endpoints:
@@ -347,7 +372,9 @@ docker stop careerflow-local
 Alternatively, use Docker Compose to run on port `8000`:
 
 ```bash
-docker compose up --build
+docker compose --env-file frontend/.env build app
+docker compose --env-file frontend/.env run --rm --no-deps app alembic upgrade head
+docker compose --env-file frontend/.env up -d --no-build app
 ```
 
 Access the app at [http://localhost:8000](http://localhost:8000) and API docs at [http://localhost:8000/docs](http://localhost:8000/docs). Stop containers with:
@@ -360,10 +387,10 @@ docker compose down
 
 - **Single Container, Same-Origin:** The container uses a multi-stage build (`node:22-bookworm-slim` for React and `python:3.12-slim` for FastAPI). In production, `REACT_APP_API_URL` is intentionally empty so all API calls (`/recommend`, `/chat`, `/recommendation/...`) are made to the same origin without CORS overhead.
 - **Reproducible Dependency Locking:** Frontend packages are installed strictly via `npm ci` matching `package-lock.json`. Backend dependencies are synchronized via `uv sync --locked --no-dev` using the committed `uv.lock`.
-- **SQLite Container Storage:** SQLite creates `backend/data/career_advisor.sqlite3` on startup. In containerized environments (such as Azure Container Apps without external volume mounts), this storage is ephemeral and instance-local. Data will reset if the container is recreated.
-- **Single Instance / Worker:** Because recommendation chat context is held in instance memory (`session_store`) and SQLite is container-local, the service is currently designed for 1 replica and 1 Uvicorn worker.
+- **Durable Storage:** Supabase PostgreSQL survives container replacement. Apply Alembic migrations before promotion; no new PostgreSQL container or automatic database reset is used.
+- **Single Instance / Worker:** Guest state and basic IP rate limits are process-local. Keep 1 replica and 1 Uvicorn worker until a shared temporary-state/rate-limit store is introduced. Authenticated AI context is loaded from the owned PostgreSQL session.
 - **Cloud Ingress (Azure Container Apps):** The container listens on internal port `8000` HTTP. In production deployment, external HTTPS termination and TLS certificates are handled by the cloud ingress controller.
-- **BYOK AI Security:** No LLM API keys are baked into the image or read from container environment files. AI credentials remain client-side in the browser session and are transmitted exclusively with AI chat/voice requests over secure headers.
+- **BYOK AI Security:** No LLM API keys are baked into the image. BYOK credentials stay in browser memory and travel only with explicit AI requests in secure headers. The optional free Gemini preview reads its separate backend-owned key from runtime environment, never from React configuration. No owner Anthropic key is required.
 
 ## Local Development
 
@@ -443,7 +470,8 @@ In Docker/production, the React build is served by FastAPI on port `8000`, so `R
 | `/recommendation/{session_id}/course-filters` | PUT | Saves course filter preferences |
 | `/parse-resume` | POST | Parses uploaded resume/CV bytes |
 | `/voice/transcribe` | POST | Transcribes short audio input via Gemini |
-| `/chat` | POST | Non-streaming AI advisor response |
+| `/ai/preview` | GET / POST | Server quota status / optional three-message Gemini preview |
+| `/chat` | POST | Non-streaming BYOK AI advisor response |
 | `/chat/stream` | POST | Streaming AI advisor response |
 | `/` | GET | Serves the React build in Docker/production |
 
@@ -473,6 +501,8 @@ In Docker/production, the React build is served by FastAPI on port `8000`, so `R
   "lang": "en"
 }
 ```
+
+Requests to `/recommend` require either `Authorization: Bearer <Supabase access token>` or a cryptographically random, tab-scoped `X-Guest-Token` (32–128 alphanumeric characters). The frontend supplies these headers automatically. Private history and account endpoints always require authentication; session endpoints check both identity and ownership. Never supply `user_id` as authorization.
 
 The response includes:
 
@@ -512,8 +542,7 @@ The response includes:
     "language": "en",
     "platform": "Udemy",
     "level": "Beginner"
-  },
-  "user_id": "demo"
+  }
 }
 ```
 
@@ -614,7 +643,9 @@ python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 Or run Docker:
 
 ```bash
-docker compose up --build
+docker compose --env-file frontend/.env build app
+docker compose --env-file frontend/.env run --rm --no-deps app alembic upgrade head
+docker compose --env-file frontend/.env up -d --no-build app
 ```
 
 ### Frontend cannot reach backend in local development
@@ -643,17 +674,11 @@ Get-NetTCPConnection -LocalPort 8000
 
 ### AI chat does not answer
 
-Open the AI assistant panel and save your Claude or Gemini API key for the current tab session. If a provider rejects it, check the key, permissions, and provider quota; the key is kept until you replace or remove it. Server environment keys are ignored. Other features continue to work without a key.
+Open the AI assistant panel and save your Claude or Gemini API key for the current tab session. If a provider rejects it, check the key, permissions, and provider quota; the key is kept until you replace or remove it. BYOK ignores server environment keys. Alternatively, choose **Try with Gemini** for the limited server-managed preview when enabled. Other features continue to work without a key.
 
-### SQLite database should be reset
+### Database schema and legacy SQLite
 
-Stop the backend and delete:
-
-```text
-backend/data/career_advisor.sqlite3
-```
-
-The schema will be recreated on the next backend startup.
+Apply versioned schema changes with `uv run alembic upgrade head`. Do not delete/reset a production database. Legacy SQLite is retained for private archival backup and rollback; shared anonymous data is never reassigned to newly registered users. See [deployment-v1.1.md](docs/deployment-v1.1.md) for backup, migration, rollback and account-deletion operations.
 
 ### PDF parser misses text
 
@@ -692,8 +717,9 @@ Best representative model: LightGBM with selected features.
 
 ## Current Limitations
 
-- Authentication is not implemented yet; persistence currently uses a demo user.
-- SQLite is local and intended for demo/development deployment.
+- Self-service Supabase Auth deletion requires the server-only Supabase administrator key.
+- Guest state and abuse limits are process-local; use one worker/replica.
+- External OAuth redirects, Google Testing allow-list and infrastructure retention settings require owner review.
 - Course price values are numeric because the dataset does not include a currency column.
 - Resume parsing does not include OCR for scanned PDFs.
 - SHAP is attempted for the CatBoost classifier, but the code intentionally falls back to feature-importance/counterfactual explanations when SHAP is unavailable in the current runtime.
@@ -701,8 +727,6 @@ Best representative model: LightGBM with selected features.
 
 ## Future Improvements
 
-- Add authentication and per-user profiles.
-- Add migrations with Alembic if the schema grows.
 - Add OCR for scanned resumes.
 - Add course currency/source normalization.
 - Connect demand forecasting to live vacancy data.

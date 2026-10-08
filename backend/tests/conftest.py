@@ -3,6 +3,10 @@ from fastapi.testclient import TestClient
 
 import main as app_main
 import database
+import guest_sessions
+import security
+import sqlalchemy as sa
+from sqlalchemy.pool import StaticPool
 
 
 EXPECTED_PROFESSIONS = {
@@ -171,19 +175,27 @@ def mocked_services(monkeypatch):
     monkeypatch.setattr(app_main, "demand", DummyDemand())
     monkeypatch.setattr(app_main, "course_finder", course_finder)
     monkeypatch.setattr(app_main, "llm", DummyLLM())
-    app_main.session_store.clear()
+    guest_sessions.sessions.clear()
+    security.buckets.clear()
     return course_finder
 
 
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "career-test.sqlite3")
-    database.init_db()
+    engine = sa.create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool,
+        execution_options={'schema_translate_map': {'careerflow': None}})
+    @sa.event.listens_for(engine, 'connect')
+    def foreign_keys(connection, record):
+        connection.execute('PRAGMA foreign_keys=ON')
+    database.metadata.create_all(engine)
+    monkeypatch.setattr(database, 'get_engine', lambda: engine)
+    yield engine
+    engine.dispose()
 
 
 @pytest.fixture
 def client(mocked_services, isolated_db):
-    with TestClient(app_main.app) as test_client:
+    with TestClient(app_main.app, headers={'X-Guest-Token': 'a' * 64}) as test_client:
         yield test_client
 
 
