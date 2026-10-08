@@ -1,18 +1,32 @@
-# CareerFlow
+<p align="center">
+  <img src="docs/assets/careerflow-logo.svg" alt="CareerFlow — wave symbol and wordmark" width="360">
+</p>
 
-CareerFlow helps IT students choose a career direction. The application ranks supported IT careers using profile classification, skill similarity and historical market signals, explains the ranking, and builds a rule-based learning roadmap with courses. CareerFlow supports Claude and Gemini through user-provided API keys. A limited free AI preview is available through Gemini when enabled by the maintainer; the core recommendations and roadmap work without an AI API key.
+<h1 align="center">CareerFlow</h1>
 
-CareerFlow is currently developed and maintained by **Danial Yermekov**.
+<p align="center">ML-powered career recommendations, skill-gap insights, and personalized learning roadmaps.</p>
 
-- **Website:** [https://careerflow.live](https://careerflow.live)
-- **GitHub:** [https://github.com/danialyermekov/Career-Recommendation-System](https://github.com/danialyermekov/Career-Recommendation-System)
-- **Current maintainer:** Danial Yermekov
-- **LinkedIn:** [https://www.linkedin.com/in/danial-yermekov/](https://www.linkedin.com/in/danial-yermekov/)
-- **Contact:** [contact@careerflow.live](mailto:contact@careerflow.live)
-- **Project started:** 2026
-- **Status:** Public MVP, actively developed.
+<p align="center">
+  <a href="https://careerflow.live">Website</a> ·
+  <a href="https://careerflow.live/feedback">Feedback</a> ·
+  <a href="mailto:contact@careerflow.live">Contact</a>
+</p>
 
-The public MVP launched on 7 October 2026. The v1.1 changes described in this repository are a release candidate; deployment has not been confirmed. Private accounts, PostgreSQL persistence and moderated public feedback require the candidate deployment and its release checks.
+<p align="center">
+  <a href="https://careerflow.live/about">About</a> ·
+  <a href="https://careerflow.live/roadmap">Roadmap</a> ·
+  <a href="https://careerflow.live/changelog">Changelog</a> ·
+  <a href="https://careerflow.live/privacy">Privacy</a> ·
+  <a href="https://careerflow.live/terms">Terms</a>
+</p>
+
+CareerFlow helps IT students choose a career direction. The application ranks supported IT careers using profile classification, skill similarity and historical market signals, explains the ranking, and builds a rule-based learning roadmap with courses. The core recommendations and roadmap run through the ML pipeline without an AI API key. The optional AI Advisor offers a three-message Gemini Free Preview when enabled by the maintainer, plus Claude/Gemini bring-your-own-key (BYOK) chat.
+
+**Status:** v1.1 public MVP, actively developed and deployed on Azure Container Apps. The project started in 2026, with the public MVP launch on 7 October 2026. Google/GitHub OAuth and private history use Supabase Auth and PostgreSQL; guest mode provides temporary recommendations without signing in.
+
+**Data scope:** Market signals come from historical 2023 job postings, not a live vacancy feed. The profile classifier is trained on synthetic educational data; scores are exploratory guidance, not predictions of career success. Dataset provenance and methodology are documented below.
+
+**Repository:** [danialyermekov/Career-Recommendation-System](https://github.com/danialyermekov/Career-Recommendation-System).
 
 For the guided demo, Gemini preview configuration, quota limits and manual release gates, see [guided-demo-ai-preview.md](docs/guided-demo-ai-preview.md).
 For v1.1 configuration, safe migration, release gates and rollback, see [deployment-v1.1.md](docs/deployment-v1.1.md).
@@ -35,16 +49,18 @@ The system helps students choose an IT career direction by combining:
 
 - student profile classification with a CatBoost classifier;
 - skill matching against profession profiles;
-- labor-market demand and trend scoring;
+- historical labor-market demand and trend scoring;
 - weighted final scoring across all supported professions;
 - skill-gap analysis;
 - personalized roadmaps with course recommendations;
 - advanced course filtering by certificate, price, language, platform, and level;
 - skill-level explainability with SHAP or fallback feature-importance logic;
 - private recommendation history and roadmap progress in Supabase PostgreSQL;
-- optional Claude or Gemini AI advisor chat with a user-provided session key;
-- a guided live demo using the real recommendation pipeline, with temporary progress;
-- an optional three-message Gemini preview with PostgreSQL quotas and server-side cost limits.
+- Google and GitHub OAuth through Supabase Auth, plus guest mode without sign-in;
+- an interactive Guided Demo using the real recommendation pipeline, with temporary progress;
+- a Gemini Free Preview with up to three messages, PostgreSQL quotas and server-side cost limits;
+- optional Claude or Gemini AI Advisor chat with a user-provided session key;
+- public About, Feedback, Roadmap and Changelog pages, with consent-based feedback moderation.
 
 The app does not only return a single top profession. It shows all supported career tracks and lets the student compare scores, skill gaps, market signals, and roadmap requirements.
 
@@ -205,7 +221,15 @@ Roadmap features:
 
 ### AI Advisor
 
-The AI advisor is optional. Open the AI assistant panel, select Claude / Anthropic (listed first) or Gemini / Google, enter your API key, and choose **Use key**. Use **Remove key** to disable AI immediately. No API key is required to start CareerFlow or use its recommendations, ML models, roadmap, resume parser, demand prediction, history, or progress.
+The AI Advisor is optional. No personal AI API key is required to use CareerFlow's recommendations, ML models, roadmap, resume parser, historical demand estimates, history, or progress. Signed-in users can save history and progress; guests use temporary session state.
+
+#### Gemini Free Preview
+
+Choose **Try with Gemini** to ask up to three questions about the current recommendation without supplying an API key. The preview requires consent and maintainer activation, uses a server-managed Gemini key, and enforces PostgreSQL-backed quotas and daily cost limits. Availability depends on the remaining quota and provider status; core recommendations continue to work when the preview is unavailable. See [preview configuration and limits](docs/guided-demo-ai-preview.md).
+
+#### Bring Your Own Key (Claude / Gemini)
+
+For BYOK chat, open the AI assistant panel, select Claude / Anthropic or Gemini / Google, enter your API key, and choose **Use key**. Use **Remove key** to disable BYOK immediately. The following capabilities and credential-handling details apply to BYOK; the Free Preview is a separate, quota-limited text chat.
 
 Features:
 
@@ -221,11 +245,11 @@ The password input is cleared after selecting **Use key**; the UI shows only the
 
 Only `/chat`, `/chat/stream`, and `/voice/transcribe` receive `X-LLM-Provider` (`anthropic` or `gemini`) and `X-LLM-API-Key` headers. They are never URL/query/body fields. FastAPI validates headers without echoing their values, then passes them to the LLM service for that request. A small provider registry dispatches to per-call SDK clients, closed after completion; no credential-bearing backend singleton, session, cache, file, or database record is created. Environment keys (`API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) are not application fallbacks.
 
-The normal generation request checks the key; selecting **Use key** makes no provider call. Missing keys return HTTP 400, rejected credentials HTTP 401, rate limits HTTP 429, and unavailable providers HTTP 503. After an SSE stream starts, failures are safe JSON `type: "error"` events followed by one `[DONE]`. Invalid keys remain only in memory for the user to correct or remove. Removing/changing credentials aborts in-flight frontend AI requests.
+The BYOK generation request checks the key; selecting **Use key** makes no provider call. Missing BYOK keys return HTTP 400, rejected credentials HTTP 401, rate limits HTTP 429, and unavailable providers HTTP 503. After an SSE stream starts, failures are safe JSON `type: "error"` events followed by one `[DONE]`. Invalid keys remain only in memory for the user to correct or remove. Removing/changing credentials aborts in-flight frontend AI requests.
 
 Claude uses Anthropic Messages with `claude-sonnet-5-5`; deep mode uses adaptive thinking. Gemini retains the existing `google-genai` chat models and thought/text stream format. Audio transcription remains Gemini-only; Claude users can type or use browser speech playback. To add a provider, implement the same three provider methods, register it in `backend/services/llm.py`, and add its public metadata to `frontend/src/utils/llmSettings.js`.
 
-Security limits: in-memory credentials do **not** protect against XSS or malicious browser extensions. Use HTTPS outside localhost. The key necessarily passes through CareerFlow's backend and the selected provider; provider-side processing and retention follow that provider's policies. Application code does not log credentials or raw provider exceptions, and suppresses SDK request/exception debug logging. Keep reverse proxies, APM, analytics, and transport debug logging from recording `X-LLM-API-Key`, `x-api-key`, or `x-goog-api-key`. CORS already permits the custom headers; it is not authentication. Authentication and rate limiting for a public deployment remain separate work.
+Security limits: in-memory credentials do **not** protect against XSS or malicious browser extensions. Use HTTPS outside localhost. The key necessarily passes through CareerFlow's backend and the selected provider; provider-side processing and retention follow that provider's policies. Application code does not log credentials or raw provider exceptions, and suppresses SDK request/exception debug logging. Keep reverse proxies, APM, analytics, and transport debug logging from recording `X-LLM-API-Key`, `x-api-key`, or `x-goog-api-key`. CORS already permits the custom headers; it is not authentication. Supabase authentication and session ownership checks protect private results; basic request limits are process-local and require shared or edge limits before scaling.
 
 ### Resume / CV Parser
 
@@ -268,7 +292,7 @@ FastAPI backend
         |-- Course finder -> filtered course metadata from all_courses.csv
         |-- Supabase PostgreSQL -> private history, scores, gaps, progress, filters, feedback
         |-- PyMuPDF parser -> resume skills and role extraction
-        |-- Claude / Gemini LLM service -> optional AI advisor
+        |-- Claude / Gemini LLM service -> optional BYOK advisor + Gemini Free Preview
         |
         v
 React frontend
@@ -292,9 +316,9 @@ React frontend
 | ML | CatBoost, LightGBM, scikit-learn, pandas, NumPy, joblib |
 | Resume parsing | PyMuPDF |
 | Frontend | React, Framer Motion, CSS Modules |
-| AI advisor | Anthropic Claude via `anthropic`; Google Gemini via `google-genai` |
+| AI advisor | Gemini Free Preview; optional Claude/Gemini BYOK via `anthropic` / `google-genai` |
 | Testing | Pytest, React Scripts/Jest |
-| Deployment | Docker, Docker Compose |
+| Deployment | Azure Container Apps (production); Docker / Docker Compose (local) |
 
 ## Repository Structure
 
@@ -337,7 +361,7 @@ Career-Recommendation-System/
 
 ## Quick Start With Docker
 
-Configure both `.env` files from their examples first. React Supabase values are build-time arguments, not runtime-only settings. Preserve the current image and SQLite backup; promote v1.1 only after authorization tests, candidate smoke tests and real OAuth checks pass.
+Configure both `.env` files from their examples first. React Supabase values are build-time arguments, not runtime-only settings. Apply Alembic migrations before starting the app. For production updates, preserve the previous image and database backups and follow the [deployment and rollback checks](docs/deployment-v1.1.md).
 
 Docker is the recommended way to run the whole app because the ML dependencies are heavy and pre-compiled in a two-stage reproducible build.
 
@@ -463,8 +487,8 @@ In Docker/production, the React build is served by FastAPI on port `8000`, so `R
 | --- | --- | --- |
 | `/health` | GET | Backend health check |
 | `/recommend` | POST | Generates recommendation, scores, skill explanations, roadmap, courses, and session context |
-| `/recommendation/history` | GET | Lists saved demo-user recommendation sessions |
-| `/recommendation/history` | DELETE | Clears saved demo-user history |
+| `/recommendation/history` | GET | Lists the authenticated user's private recommendation sessions |
+| `/recommendation/history` | DELETE | Clears the authenticated user's private history |
 | `/recommendation/{session_id}/state` | GET | Loads saved result, progress, and course filter preferences |
 | `/recommendation/{session_id}/progress` | PUT | Saves roadmap checklist and drag-and-drop order |
 | `/recommendation/{session_id}/course-filters` | PUT | Saves course filter preferences |
@@ -736,3 +760,11 @@ Best representative model: LightGBM with selected features.
 ## License
 
 This repository is intended for academic and portfolio demonstration purposes. Add an explicit license before public reuse or distribution.
+
+## Contact
+
+CareerFlow is currently developed and maintained by **Danial Yermekov**. The original project authors are acknowledged in [Contributors](#contributors).
+
+- **Email:** [contact@careerflow.live](mailto:contact@careerflow.live)
+- **GitHub:** [danialyermekov](https://github.com/danialyermekov)
+- **LinkedIn:** [Danial Yermekov](https://www.linkedin.com/in/danial-yermekov/)
