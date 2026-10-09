@@ -1,8 +1,8 @@
 # CareerFlow Profile Classifier
 
-This research module is part of the CareerFlow graduation project. The serving classifier uses field of study, GPA, technical indicators, soft-skill ratings and derived features to produce profile-fit signals for career ranking. Training labels come from synthetic profile data; they do not represent observed career success.
+This research module supports the deployed CareerFlow MVP and originated in the graduation project. The serving classifier uses field of study, GPA, technical indicators, soft-skill ratings and derived features to produce profile-fit signals for career ranking. Training labels come from synthetic profile data; they do not represent observed career success.
 
-The problem addressed by this project is highly relevant to the **HR Tech** industry, career consulting, and educational platforms, helping users build optimal vectors for professional development.
+The classifier is one signal in the application's weighted ranking, alongside skill similarity and historical demand; its classification metrics do not evaluate the complete recommendation system.
 
 ---
 
@@ -31,13 +31,13 @@ The entire development process of the machine learning model is divided into seq
 ## Repository Structure
 
 ```text
-predict_career/
+ml/classification/
 ├── configs/            # JSON configurations (e.g., selected features)
-├── data/               # Data directory (excluded from version control)
+├── data/               # Checked-in synthetic source and derived datasets
 │   ├── raw/            # Initial dataset
 │   ├── not_processed/  # Intermediate data
 │   ├── processed/      # Prepared dataset for ML
-│   └── balanced/       # Datasets after oversampling/undersampling
+│   └── balanced/       # Dataset after rule-based synthetic balancing
 ├── notebooks/          # Core research Jupyter notebooks
 ├── results/            # Final metrics (classification_report.csv) and training logs
 ├── src/                # Supporting Python modules
@@ -54,43 +54,40 @@ One of the main challenges of this dataset is the severe class imbalance. Baseli
 
 To mitigate this problem, weighted loss functions (class_weight, auto_class_weights='Balanced') and gradient boosting algorithms optimized with Bayesian search were applied.
 
-### Summary Metric Table (Best Models on the Test Set)
+### Saved Test-Set Experiments
 
-selected - selected_features_catboost.json(features after catboost feature selection)
-processed - dataset after preprocessor (Standart Scaler, OneHotEncoder)
-4-th class - target scorer (f1-macro for 4th class)
+Values below come from [classification_report_fixed.csv](results/classification_report_fixed.csv), whose per-class columns use profession names. Each row refers to one recorded experiment; metrics are not combined across variants. For the two `XGBoost (preprocessed)` rows in the CSV, the table uses the higher-accuracy row.
 
-| Модель | Accuracy | F1 (Macro) | F1 (4-th class) |
-| :--- | :--- | :--- | :--- | :--- |
-| **CatBoost (processed)** | **0.8440** | **0.8024** | 0.65 |
-| **LightGBM (4th class)** | 0.8422 | 0.8 | **0.8448** |
-| **XGBoost (processed)** | 0.8404 | 0.8054 | 0.62 |
-| **Random Forest** | 0.8050 | 0.7518 | 0.4421 |
-| **Logistic Regression** | 0.8191 | 0.7811 | 0.6549 |
+`selected features` refers to feature-selection experiments; `processed`/`preprocessed` refers to preprocessing such as StandardScaler and OneHotEncoder. The notebook's `4th class` tuning scorer uses `labels=[3]`, targeting Data Engineer, rather than macro F1 over all professions.
+
+| Recorded model | Accuracy | Macro F1 | Weighted F1 | Data Engineer F1 |
+| :--- | ---: | ---: | ---: | ---: |
+| **CatBoost (processed dataset)** | **0.8440** | **0.8094** | **0.8413** | 0.6250 |
+| LightGBM (4th class) | 0.8245 | 0.7840 | 0.8208 | 0.5932 |
+| XGBoost (preprocessed) | 0.8404 | 0.8054 | 0.8368 | 0.6207 |
+| Random Forest | 0.8050 | 0.7518 | 0.7904 | 0.4421 |
+| Logistic Regression | 0.8191 | 0.7811 | 0.8164 | 0.6549 |
+
+These are saved research results on synthetic labels, not newly reproduced benchmarks, probabilities of career success or validation on real student outcomes. Other variants and all per-class metrics remain in the CSV.
 
 ---
 
 ## Installation and Usage
 
-1. **Clone the repository and navigate to the project directory:**
+1. **Clone the repository and navigate to this research module:**
    ```bash
-   git clone <Repository_URL>
-   cd predict_career
+   git clone https://github.com/danialyermekov/careerflow.git
+   cd careerflow/ml/classification
    ```
 
 2. **Synchronize the project environment:**
    The project uses *uv* for package management, which reads the pyproject.toml and *uv.lock* files to set up the exact development environment.
    ```bash
-   uv sync
+   uv sync --locked
    ```
 
-3. **Activate the virtual environment:**
-   ```bash
-    # For Windows:
-    .venv\Scripts\activate
-    # For Linux/Mac:
-    source .venv/bin/activate
-   ```
+3. **Select the research interpreter:**
+   This module's [pyproject.toml](pyproject.toml) requires Python **>=3.14**, independently of the backend's Python 3.11–3.13 requirement. Use this module's `.venv` as the kernel in your notebook editor; `uv` reuses an existing environment. A Jupyter notebook editor/kernel must be available separately; it is not declared in this module's dependencies.
 
 4. **Run the research notebooks:**
-   To verify the pipeline, run the notebooks in the `notebooks/` directory sequentially, starting with `data_preparation.ipynb`. Ensure that all processed datasets are generated before running modeling.ipynb.
+   Run the notebooks in the `notebooks/` directory sequentially, starting with `data_preparation.ipynb`, using `notebooks/` as the working directory because paths are relative to it. Ensure the required derived datasets exist before running `modeling.ipynb`. Notebook execution can regenerate datasets and append experiment reports; the metrics above describe the checked-in results rather than a guaranteed fresh run.

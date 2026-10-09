@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/careerflow-logo.svg" alt="CareerFlow — wave symbol and wordmark" width="360">
+  <img src="assets/careerflow-logo.svg" alt="CareerFlow — wave symbol and wordmark" width="360">
 </p>
 
 <h1 align="center">CareerFlow</h1>
@@ -20,18 +20,15 @@
   <a href="https://careerflow.live/terms">Terms</a>
 </p>
 
-CareerFlow helps IT students choose a career direction. The application ranks supported IT careers using profile classification, skill similarity and historical market signals, explains the ranking, and builds a rule-based learning roadmap with courses. The core recommendations and roadmap run through the ML pipeline without an AI API key. The optional AI Advisor offers a three-message Gemini Free Preview when enabled by the maintainer, plus Claude/Gemini bring-your-own-key (BYOK) chat.
+CareerFlow helps IT students explore a career direction. The application ranks seven IT careers using profile classification, skill similarity and historical market signals, explains the ranking, and builds a rule-based learning roadmap with courses. Try the **Guided Demo** on the [live website](https://careerflow.live) for an immediate recommendation and a guided results tour, or enter your own profile in guest mode. Sign in to save private history and learning progress.
 
-**Status:** v1.1 public MVP, actively developed and deployed on Azure Container Apps. The project started in 2026, with the public MVP launch on 7 October 2026. Google/GitHub OAuth and private history use Supabase Auth and PostgreSQL; guest mode provides temporary recommendations without signing in.
+**Status:** v1.1 public MVP, actively developed and deployed on Azure Container Apps. Google/GitHub OAuth and private history use Supabase Auth and PostgreSQL. The core ML recommendations and roadmap require no AI API key. The optional AI Advisor offers an enabled **Gemini Free Preview with up to three messages** on production, plus Claude/Gemini bring-your-own-key (BYOK) chat.
 
 **Data scope:** Market signals come from historical 2023 job postings, not a live vacancy feed. The profile classifier is trained on synthetic educational data; scores are exploratory guidance, not predictions of career success. Dataset provenance and methodology are documented below.
 
-**Repository:** [danialyermekov/Career-Recommendation-System](https://github.com/danialyermekov/careerflow).
+**Repository:** [danialyermekov/careerflow](https://github.com/danialyermekov/careerflow). **Current maintainer:** [Danial Yermekov](#contact).
 
-For the guided demo, Gemini preview configuration, quota limits and manual release gates, see [guided-demo-ai-preview.md](docs/guided-demo-ai-preview.md).
-For v1.1 configuration, safe migration, release gates and rollback, see [deployment-v1.1.md](docs/deployment-v1.1.md).
-For public pages, consent-based feedback, voting, exact moderation commands and verified changelog sources, see [public-product-pages.md](docs/public-product-pages.md).
-For prerendered public HTML, technical SEO and owner steps for DNS verification/indexing, see [google-search-console.md](docs/google-search-console.md).
+For configuration and safe local setup, see [Local Development](#local-development). The [backend README](backend/README.md) describes the API and services; the research READMEs linked under [Model Results](#model-results) describe the ML experiments. The production status above was checked on 9 October 2026.
 
 ## Contributors
 
@@ -94,7 +91,7 @@ Normalized user skills are sorted before vectorization because the saved TF-IDF 
 
 ### Data and reviewer workflow
 
-Use **Use demo profile** on the landing page or profile form to load an editable Computer Science student with GPA 3.2, Python/SQL/Pandas/Git/Excel and moderate self-ratings. Submit it through the normal recommendation API. Demo labels are browser-tab metadata; no history is fabricated. GPA is the only field the form requires users to enter; other API fields are populated with visible defaults.
+The landing-page **Guided Demo** immediately sends a fixed Computer Science profile through the real recommendation API and opens a five-step results tour; no manual form submission is required. It uses guest credentials even when the visitor is signed in, so demo results and progress remain temporary. The profile form separately offers an editable demo profile with GPA 3.2, Python/SQL/Pandas/Git/Excel and moderate self-ratings; this form still requires submission. Demo labels are browser-tab metadata; no history is fabricated. GPA is the only field the form requires users to enter; other API fields are populated with visible defaults.
 
 Dataset provenance (source pages supplied by the project owner; upstream metadata checked on 2026-10-07):
 
@@ -111,13 +108,13 @@ The raw profile file contains 2,000 rows. The training preparation adds syntheti
 
 The course catalog contains 41,690 rows in `backend/data/all_courses.csv`, not a verified count of distinct, currently available courses. Price, availability and rating freshness are unverified. The public hero does not advertise this count. The roadmap uses normalized skill gaps, category limits and framework/language compatibility rules; progress counts user-marked learning steps.
 
-Navigation uses URL hashes (`#profile`, `#results/<session_id>`) without adding a router. A saved result can reload through the existing state API. Supabase Auth provides Google/GitHub sign-in. Each saved result belongs to its verified user; guest results require a separate random credential and expire after two hours or a server restart. Guest history is never imported into an account automatically. Dataset licensing and the documented infrastructure/privacy review items remain separate release concerns.
+Private application views use URL hashes (`#profile`, `#results/<session_id>`); public pages use clean paths such as `/about`, `/feedback`, `/roadmap` and `/changelog`, with prerendered HTML in the production build. OAuth returns to `/auth/callback`. A saved result can reload through the state API and belongs to its verified user. Guest results require a separate random credential and last at most two hours, ending earlier on a process restart or scale-to-zero. Guest history is never imported into an account automatically. Dataset licensing and infrastructure/privacy review remain separate concerns.
 
 Backend services:
 
 - `ClassifierService`: CatBoost model for profile-fit probabilities.
 - `SkillMatcherService`: TF-IDF profession vectors and cosine similarity.
-- `DemandService`: LightGBM-based demand and vacancy trend scoring.
+- `DemandService`: fits LightGBM on bundled historical data when the service is first initialized in a process, then caches weekly demand scores; it does not fetch live vacancies.
 - `CourseFinderService`: roadmap course lookup from the course catalog.
 - `LLMService`: optional Claude/Gemini chat and streaming; Gemini voice transcription.
 
@@ -149,6 +146,8 @@ The frontend provides filters for:
 
 Filters work together and update course lists without page reload. The same filtering logic is used in the recommended courses block and inside the roadmap. If no course matches the selected filters, the UI shows an empty-state message.
 
+Some metadata is heuristic: the catalog has no language or currency column, and language/free-price handling can infer values from titles or providers. Filters do not verify the current course page, price, availability or certificate terms.
+
 ### Explainability
 
 The app has two explanation layers:
@@ -172,13 +171,13 @@ When the user selects another profession, the explanation panel updates for that
 
 ### PostgreSQL Persistence
 
-The project uses the existing Supabase PostgreSQL database through SQLAlchemy Core, psycopg 3 and Alembic. Tables live in the private `careerflow` schema. The previous SQLite file is retained only for a read-only archival migration:
+The application uses Supabase PostgreSQL through SQLAlchemy Core, psycopg 3 and Alembic. Tables live in the private `careerflow` schema. A legacy SQLite file, if present locally, is only an input to the archival utility:
 
 ```text
 backend/data/career_advisor.sqlite3
 ```
 
-Schema changes run explicitly with `uv run alembic upgrade head`; startup does not create or reset tables. UUID account IDs reference Supabase Auth users with cascading deletion. Application tables have RLS enabled and no browser-role permissions. The legacy SQLite file remains ignored by Git and Docker context; it is not imported into new accounts.
+Schema changes run explicitly through Alembic after checking the database target; see [safe local migrations](#safe-local-migrations). Startup does not create or reset tables. UUID account IDs reference Supabase Auth users with cascading deletion. Application tables have RLS enabled and no browser-role permissions. The legacy SQLite file is ignored by Git and Docker context; application requests never read it or import its anonymous history into accounts. It is not a rollback database for v1.1.
 
 Current tables:
 
@@ -191,8 +190,13 @@ Current tables:
 | `roadmap_items` | Roadmap tasks, order, completion state, related courses |
 | `course_progress` | Per-course progress placeholders |
 | `course_filter_preferences` | Saved filter state per recommendation session |
+| `feedback` | Private submissions, publication consent, moderation status and origin |
+| `feedback_votes` | Authenticated votes on published feature requests |
+| `ai_trial_usage` | Preview allowance per guest cookie or authenticated identity |
+| `ai_trial_budget` | Shared daily preview attempt budget |
+| `ai_trial_ip` | Short-lived preview IP rate-limit counters |
 
-Google/GitHub OAuth uses Supabase Auth and PKCE. The backend verifies Bearer tokens through Supabase Auth and scopes every private session operation to the verified user. Feedback defaults to private and pending; only explicitly consented, approved reviews/features with maintainer-classified origin have a public listing. Feature votes require authentication. See [deployment and migration instructions](docs/deployment-v1.1.md) and the [moderation workflow](docs/public-product-pages.md).
+Google/GitHub OAuth uses Supabase Auth and PKCE. The maintainer has manually confirmed both providers work on `careerflow.live` and that Google's OAuth app is in Production mode. Local sign-in separately requires the exact development callback URL in the development Supabase project's redirect allow-list; production success does not prove a local project's configuration. The backend verifies Bearer tokens through Supabase Auth and scopes every private session operation to the verified user. Feedback defaults to private and pending; only explicitly consented, approved reviews/features with maintainer-classified origin have a public listing. Feature votes require authentication.
 
 ### Visual Analytics
 
@@ -225,7 +229,9 @@ The AI Advisor is optional. No personal AI API key is required to use CareerFlow
 
 #### Gemini Free Preview
 
-Choose **Try with Gemini** to ask up to three questions about the current recommendation without supplying an API key. The preview requires consent and maintainer activation, uses a server-managed Gemini key, and enforces PostgreSQL-backed quotas and daily cost limits. Availability depends on the remaining quota and provider status; core recommendations continue to work when the preview is unavailable. See [preview configuration and limits](docs/guided-demo-ai-preview.md).
+Choose **Try with Gemini** to ask up to three questions about the current recommendation without supplying an API key. The preview is enabled on production: `/ai/preview` reported `available: true`, `total: 3` and model `gemini-3.5-flash-lite` during the 9 October 2026 audit. It requires consent, uses a server-managed Gemini key, and enforces PostgreSQL-backed quotas and daily cost limits. The allowance is tracked separately per guest cookie or verified account; it is not three messages per day or a verified per-person entitlement. Availability depends on remaining quota, the shared daily budget and provider status; core recommendations continue to work when the preview is unavailable.
+
+Fresh local installations default to `GEMINI_DEMO_ENABLED=false`. When deliberately enabled, the preview uses `GEMINI_DEMO_API_KEY`, falling back to the legacy server-side `API_KEY` only for this preview. Neither key belongs in React variables or Docker build arguments. Preview conversations are not saved to recommendation history; the request sends a limited recommendation context. See [development configuration](#development-configuration) for the quota and model variables. Supported preview models are `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` and `gemini-2.5-flash-lite`; other model IDs fail closed, with no Pro fallback.
 
 #### Bring Your Own Key (Claude / Gemini)
 
@@ -243,21 +249,20 @@ Features:
 
 The password input is cleared after selecting **Use key**; the UI shows only the provider and a masked enabled state. Credentials live only in frontend module memory for the lifetime of the loaded React application. Client-side navigation keeps them available; a full refresh, reopening the page, or opening another tab starts without a key. **Remove key** clears them immediately. Credentials are never written to localStorage, sessionStorage, IndexedDB, cookies, chat messages, or recommendation/progress history. Loading this version removes the legacy `careerflow-llm-session` browser-storage entry without reading or restoring it.
 
-Only `/chat`, `/chat/stream`, and `/voice/transcribe` receive `X-LLM-Provider` (`anthropic` or `gemini`) and `X-LLM-API-Key` headers. They are never URL/query/body fields. FastAPI validates headers without echoing their values, then passes them to the LLM service for that request. A small provider registry dispatches to per-call SDK clients, closed after completion; no credential-bearing backend singleton, session, cache, file, or database record is created. Environment keys (`API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) are not application fallbacks.
+Only `/chat`, `/chat/stream`, and `/voice/transcribe` receive `X-LLM-Provider` (`anthropic` or `gemini`) and `X-LLM-API-Key` headers. They are never URL/query/body fields. FastAPI validates headers without echoing their values, then passes them to the LLM service for that request. A small provider registry dispatches to per-call SDK clients, closed after completion; no credential-bearing backend singleton, session, cache, file, or database record is created. BYOK never falls back to server credentials, including `API_KEY`, `GEMINI_DEMO_API_KEY`, `GOOGLE_API_KEY`, `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`.
 
 The BYOK generation request checks the key; selecting **Use key** makes no provider call. Missing BYOK keys return HTTP 400, rejected credentials HTTP 401, rate limits HTTP 429, and unavailable providers HTTP 503. After an SSE stream starts, failures are safe JSON `type: "error"` events followed by one `[DONE]`. Invalid keys remain only in memory for the user to correct or remove. Removing/changing credentials aborts in-flight frontend AI requests.
 
 Claude uses Anthropic Messages with `claude-sonnet-5-5`; deep mode uses adaptive thinking. Gemini retains the existing `google-genai` chat models and thought/text stream format. Audio transcription remains Gemini-only; Claude users can type or use browser speech playback. To add a provider, implement the same three provider methods, register it in `backend/services/llm.py`, and add its public metadata to `frontend/src/utils/llmSettings.js`.
 
-Security limits: in-memory credentials do **not** protect against XSS or malicious browser extensions. Use HTTPS outside localhost. The key necessarily passes through CareerFlow's backend and the selected provider; provider-side processing and retention follow that provider's policies. Application code does not log credentials or raw provider exceptions, and suppresses SDK request/exception debug logging. Keep reverse proxies, APM, analytics, and transport debug logging from recording `X-LLM-API-Key`, `x-api-key`, or `x-goog-api-key`. CORS already permits the custom headers; it is not authentication. Supabase authentication and session ownership checks protect private results; basic request limits are process-local and require shared or edge limits before scaling.
+Security limits: in-memory credentials do **not** protect against XSS or malicious browser extensions. Use HTTPS outside localhost. The key necessarily passes through CareerFlow's backend and the selected provider; provider-side processing and retention follow that provider's policies. BYOK errors are sanitized and SDK request/exception debug logging is suppressed. The separate preview error handler currently logs exception text, so its logs still require a privacy review; do not treat all provider failures as fully redacted. Keep reverse proxies, APM, analytics, and transport debug logging from recording `X-LLM-API-Key`, `x-api-key`, or `x-goog-api-key`. CORS permits the custom headers; it is not authentication. Supabase authentication and session ownership checks protect private results; basic request limits are process-local and require shared or edge limits before scaling.
 
 ### Resume / CV Parser
 
 The backend can parse raw file bytes for:
 
 - text-based PDF files;
-- TXT files;
-- document-like files with extractable text.
+- TXT files through supported text decoding.
 
 It extracts:
 
@@ -265,7 +270,7 @@ It extracts:
 - possible current role;
 - text preview.
 
-Scanned image-only resumes require OCR and are not fully supported yet.
+Scanned image-only resumes require OCR, which is not implemented. DOCX is not supported by a dedicated document reader.
 
 ### Localization
 
@@ -323,13 +328,15 @@ React frontend
 ## Repository Structure
 
 ```text
-Career-Recommendation-System/
+careerflow/
+├── .github/workflows/ci.yml              # Backend tests, frontend tests and build
+├── assets/careerflow-logo.svg            # Official README logo
 ├── backend/
 │   ├── data/
-│   │   ├── all_courses.csv              # Course catalog with prices
-│   │   ├── vacancy_data.csv             # Demand dataset
-│   │   └── career_advisor.sqlite3       # Legacy archive source, gitignored
+│   │   ├── all_courses.csv              # Course catalog; freshness/currency unverified
+│   │   └── vacancy_data.csv             # Historical 2023 weekly demand observations
 │   ├── models/                          # Serialized ML models and profiles
+│   ├── migrations/                      # Versioned PostgreSQL schema changes
 │   ├── services/
 │   │   ├── classifier.py                # CatBoost scoring and SHAP/fallback explainability
 │   │   ├── course_finder.py             # Course metadata and roadmap course lookup
@@ -342,10 +349,16 @@ Career-Recommendation-System/
 │   ├── main.py                          # FastAPI routes
 │   ├── roadmap.py                       # Roadmap generation
 │   ├── schemas.py                       # Pydantic schemas
-│   └── pyproject.toml                   # Backend dependencies
+│   ├── .env.example                     # Backend configuration template, no secrets
+│   ├── alembic.ini
+│   ├── pyproject.toml                   # Backend dependencies
+│   └── uv.lock                          # Locked backend environment
 ├── frontend/
+│   ├── .env.example                     # Public API/Supabase build configuration
 │   ├── public/
+│   ├── scripts/                         # Public-page prerendering and branding tools
 │   ├── package.json
+│   ├── package-lock.json
 │   └── src/
 │       ├── components/
 │       ├── context/
@@ -353,7 +366,6 @@ Career-Recommendation-System/
 │       ├── utils/api.js
 │       └── i18n.js
 ├── ml/                                  # Research notebooks and model work
-├── scripts/
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
@@ -361,86 +373,121 @@ Career-Recommendation-System/
 
 ## Quick Start With Docker
 
-Configure both `.env` files from their examples first. React Supabase values are build-time arguments, not runtime-only settings. Apply Alembic migrations before starting the app. For production updates, preserve the previous image and database backups and follow the [deployment and rollback checks](docs/deployment-v1.1.md).
+Docker builds React and FastAPI into one image. First follow [development configuration](#development-configuration) and [safe local migrations](#safe-local-migrations) using a **separate, disposable development Supabase project**. Compose does not create a database. Never use production credentials for local setup or test commands.
 
-Docker is the recommended way to run the whole app because the ML dependencies are heavy and pre-compiled in a two-stage reproducible build.
-
-### Production Container Build & Run
-
-1. Build the production image:
+From the repository root:
 
 ```bash
-docker compose --env-file frontend/.env build app
-docker compose --env-file frontend/.env run --rm --no-deps app alembic upgrade head
+docker compose -p careerflow-local --env-file frontend/.env config --quiet
+docker compose -p careerflow-local --env-file frontend/.env build app
+docker compose -p careerflow-local --env-file frontend/.env up -d --no-build app
 ```
 
-2. Run the single container (example using local port `18002` or `8000`):
+`--env-file frontend/.env` supplies Compose interpolation for the required `REACT_APP_SUPABASE_URL` and `REACT_APP_SUPABASE_PUBLISHABLE_KEY` **build arguments**. The separate `env_file: backend/.env` in Compose supplies backend runtime settings; it does not supply React build arguments. Rebuild after changing frontend values. Compose forces `REACT_APP_API_URL` to an empty string for same-origin requests.
+
+Access the app at [http://localhost:8000](http://localhost:8000), [liveness](http://localhost:8000/health), [readiness](http://localhost:8000/ready) and [API docs](http://localhost:8000/docs). The Compose port mapping binds port 8000 on the host, so use a trusted development machine/network. Stop it from the repository root with:
 
 ```bash
-docker run --rm --name careerflow-local --env-file backend/.env --env-file frontend/.env -p 127.0.0.1:18002:8000 career-recommendation-system-app
+docker compose -p careerflow-local --env-file frontend/.env down
 ```
 
-3. Access the endpoints:
-- Application UI: [http://localhost:18002/](http://localhost:18002/)
-- Healthcheck: [http://localhost:18002/health](http://localhost:18002/health)
-- API documentation: [http://localhost:18002/docs](http://localhost:18002/docs)
-
-4. Stop the container:
+For a loopback-only alternative on port 18002, stop Compose first and run its built image:
 
 ```bash
-docker stop careerflow-local
+docker run --rm --name careerflow-local --env-file backend/.env --env-file frontend/.env -p 127.0.0.1:18002:8000 careerflow-local-app
 ```
 
-### Quick Start With Docker Compose
-
-Alternatively, use Docker Compose to run on port `8000`:
-
-```bash
-docker compose --env-file frontend/.env build app
-docker compose --env-file frontend/.env run --rm --no-deps app alembic upgrade head
-docker compose --env-file frontend/.env up -d --no-build app
-```
-
-Access the app at [http://localhost:8000](http://localhost:8000) and API docs at [http://localhost:8000/docs](http://localhost:8000/docs). Stop containers with:
-
-```bash
-docker compose down
-```
+Open [http://localhost:18002](http://localhost:18002); stop with `docker stop careerflow-local`. The explicit Compose project name makes the image name independent of the checkout directory or repository rename.
 
 ### Architecture and Runtime Notes
 
 - **Single Container, Same-Origin:** The container uses a multi-stage build (`node:22-bookworm-slim` for React and `python:3.12-slim` for FastAPI). In production, `REACT_APP_API_URL` is intentionally empty so all API calls (`/recommend`, `/chat`, `/recommendation/...`) are made to the same origin without CORS overhead.
 - **Reproducible Dependency Locking:** Frontend packages are installed strictly via `npm ci` matching `package-lock.json`. Backend dependencies are synchronized via `uv sync --locked --no-dev` using the committed `uv.lock`.
-- **Durable Storage:** Supabase PostgreSQL survives container replacement. Apply Alembic migrations before promotion; no new PostgreSQL container or automatic database reset is used.
+- **Durable Storage:** Supabase PostgreSQL survives container replacement. Migrations are a separate operation; no new PostgreSQL container or automatic database reset is used. Production migrations require a reviewed target, backup and release procedure.
 - **Single Instance / Worker:** Guest state and basic IP rate limits are process-local. Keep 1 replica and 1 Uvicorn worker until a shared temporary-state/rate-limit store is introduced. Authenticated AI context is loaded from the owned PostgreSQL session.
-- **Cloud Ingress (Azure Container Apps):** The container listens on internal port `8000` HTTP. In production deployment, external HTTPS termination and TLS certificates are handled by the cloud ingress controller.
+- **Cloud Ingress (Azure Container Apps):** The container listens on internal port `8000` HTTP; Azure ingress handles public HTTPS for `careerflow.live`. The 9 October 2026 read-only check found single-revision mode, 0–1 replicas and ready image `careerflowacr.azurecr.io/careerflow:v1.1-73e220b`. Scale-to-zero can discard guest state. The image starts one Uvicorn worker with proxy-header support and access logs disabled; its wildcard forwarded-header trust assumes traffic arrives through the trusted ingress and needs review before exposing that server directly.
 - **BYOK AI Security:** No LLM API keys are baked into the image. BYOK credentials stay in browser memory and travel only with explicit AI requests in secure headers. The optional free Gemini preview reads its separate backend-owned key from runtime environment, never from React configuration. No owner Anthropic key is required.
 
 ## Local Development
 
-### Backend
+Use Python 3.11–3.13 (production/CI use 3.12), [uv](https://docs.astral.sh/uv/), and Node.js 22 with npm. Clone the current repository, or use an existing checkout:
+
+```bash
+git clone https://github.com/danialyermekov/careerflow.git
+cd careerflow
+```
+
+### Development Configuration
+
+Create `backend/.env` and `frontend/.env` from the respective [backend template](backend/.env.example) and [frontend template](frontend/.env.example) **only if those files do not already exist**. Fill them with your own development project settings; do not copy the production environment. A Supabase project is required because migrations reference `auth.users`; an empty standalone PostgreSQL database is not sufficient. Keep SSL enabled and URL-encode special characters in the database password.
+
+| Variable | Location and purpose |
+| --- | --- |
+| `SUPABASE_URL` | Backend; development project's HTTPS URL |
+| `DATABASE_URL` | Backend; that same project's PostgreSQL connection URL, with `sslmode=require` or stronger |
+| `SUPABASE_PUBLISHABLE_KEY` | Backend; public key, or fallback from `REACT_APP_SUPABASE_PUBLISHABLE_KEY` / local frontend configuration |
+| `SUPABASE_SECRET_KEY` | Optional server-only administrator key for self-service Auth identity deletion; legacy alias `SUPABASE_SERVICE_ROLE_KEY` is also accepted |
+| `CORS_ORIGINS` | Backend; comma-separated origins, including `http://localhost:3000` for the separate dev server |
+| `DEVELOPER_SUPABASE_USER_IDS` | Optional backend list of maintainer UUIDs for feedback origin classification |
+| `REACT_APP_API_URL` | Frontend; `http://localhost:8000` for `npm start`, empty for the same-origin container build |
+| `REACT_APP_SUPABASE_URL` | Frontend build; same development project's URL |
+| `REACT_APP_SUPABASE_PUBLISHABLE_KEY` | Frontend build; public key only |
+| `GEMINI_DEMO_ENABLED` | Backend; `false` by default, explicitly opt in for a development preview |
+| `GEMINI_DEMO_API_KEY` / `API_KEY` | Backend only; dedicated preview key / legacy fallback, never BYOK credentials |
+| `GEMINI_DEMO_MODEL` | Backend; `gemini-3.5-flash-lite` (default), `gemini-3.1-flash-lite` or `gemini-2.5-flash-lite` |
+| `GEMINI_DEMO_FREE_MESSAGES` | Backend; default 3, allowed positive maximum 3 per preview identity |
+| `GEMINI_DEMO_GLOBAL_DAILY_LIMIT` | Backend; default 100 shared preview attempts/day, not a per-user allowance |
+
+Never put database passwords, administrator keys or AI keys in `REACT_APP_*` variables: React values are public in the build. Backend configuration loads `backend/.env` without overriding inherited environment variables; check the effective target before running migrations or starting the server. Neither `.env` file is committed.
+
+For local OAuth, enable providers in your development Supabase project, configure their credentials there, and allow the exact callback `http://localhost:3000/auth/callback` (or `http://localhost:8000/auth/callback` for Compose). Add the matching `127.0.0.1` callback only if you use that origin. Google's Production status on the live project does not automatically configure a separate development project.
+
+### Safe Local Migrations
+
+Install locked dependencies first. `uv` reuses the existing project environment; manual activation or a second virtual environment is unnecessary:
 
 ```bash
 cd backend
-python -m venv .venv
+uv sync --locked --extra dev
 ```
 
-Windows PowerShell:
+Run this PowerShell example from `backend/`. Enter the project ref of your **disposable development project**, never the production ref. It checks the effective configuration (including inherited variables) against that ref before invoking Alembic, and does not print the connection string:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+$devProjectRef = Read-Host "Disposable development Supabase project ref"
+@'
+import re
+import subprocess
+import sys
+from sqlalchemy.engine import make_url
+from config import DATABASE_URL, SUPABASE_URL
+
+ref = sys.argv[1].strip()
+if not re.fullmatch(r"[a-z0-9]{20}", ref):
+    raise SystemExit("Invalid development project ref; no migration was run.")
+if SUPABASE_URL != f"https://{ref}.supabase.co":
+    raise SystemExit("Supabase target mismatch; no migration was run.")
+try:
+    url = make_url(DATABASE_URL)
+except Exception:
+    raise SystemExit("Invalid database URL; no migration was run.") from None
+direct = url.host == f"db.{ref}.supabase.co"
+pooler = (url.host or "").endswith(".pooler.supabase.com") and url.username == f"postgres.{ref}"
+if url.get_backend_name() != "postgresql" or not (direct or pooler):
+    raise SystemExit("Database target mismatch; no migration was run.")
+subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], check=True)
+'@ | uv run --locked python - $devProjectRef
+if ($LASTEXITCODE -ne 0) { throw "Migration failed; do not start the application." }
 ```
 
-macOS / Linux:
+This is a development target check, not a production migration procedure. It depends on entering the correct development ref. If it fails, fix your development configuration; do not bypass it with a bare Alembic command.
+
+### Backend
+
+After successful development migrations, from `backend/`:
 
 ```bash
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+uv run --locked uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Backend URL:
@@ -461,7 +508,7 @@ In another terminal:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm start
 ```
 
@@ -486,6 +533,7 @@ In Docker/production, the React build is served by FastAPI on port `8000`, so `R
 | Endpoint | Method | Description |
 | --- | --- | --- |
 | `/health` | GET | Backend health check |
+| `/ready` | GET | Queries required tables and checks Auth configuration; does not compare the Alembic revision |
 | `/recommend` | POST | Generates recommendation, scores, skill explanations, roadmap, courses, and session context |
 | `/recommendation/history` | GET | Lists the authenticated user's private recommendation sessions |
 | `/recommendation/history` | DELETE | Clears the authenticated user's private history |
@@ -493,10 +541,16 @@ In Docker/production, the React build is served by FastAPI on port `8000`, so `R
 | `/recommendation/{session_id}/progress` | PUT | Saves roadmap checklist and drag-and-drop order |
 | `/recommendation/{session_id}/course-filters` | PUT | Saves course filter preferences |
 | `/parse-resume` | POST | Parses uploaded resume/CV bytes |
+| `/courses/filter` | POST | Filters course recommendations |
 | `/voice/transcribe` | POST | Transcribes short audio input via Gemini |
 | `/ai/preview` | GET / POST | Server quota status / optional three-message Gemini preview |
 | `/chat` | POST | Non-streaming BYOK AI advisor response |
 | `/chat/stream` | POST | Streaming AI advisor response |
+| `/account` | GET / DELETE | Verified account summary / account deletion (Auth deletion requires the server administrator key) |
+| `/feedback` | POST | Submits private feedback with explicit publication consent options |
+| `/api/feedback` | GET | Lists moderated, consented public feedback |
+| `/api/feedback/{feedback_id}/vote` | PUT | Sets an authenticated feature-request vote |
+| `/api/roadmap` | GET | Lists published feature requests tracked on the roadmap |
 | `/` | GET | Serves the React build in Docker/production |
 
 ### Example Recommendation Request
@@ -577,7 +631,7 @@ The resume parser accepts raw file bytes. It does not require multipart upload.
 PowerShell example:
 
 ```powershell
-$path = "C:\Users\Администратор\Downloads\resume.pdf"
+$path = Join-Path $PWD "resume.pdf" # Use your own local file.
 Invoke-RestMethod `
   -Uri http://localhost:8000/parse-resume `
   -Method Post `
@@ -599,20 +653,23 @@ Example response:
 
 ## Testing
 
-Backend tests:
+CI already exists in [.github/workflows/ci.yml](.github/workflows/ci.yml): backend tests (excluding the running-server recommendation tests), frontend tests and a production build run on pushes and pull requests. This workflow verifies code; it does not deploy Azure.
+
+Backend unit/API tests, from a development environment:
 
 ```bash
 cd backend
-uv run --extra dev pytest tests/test_api.py tests/test_course_finder.py tests/test_llm.py
+uv sync --locked --extra dev
+uv run --locked --extra dev pytest --ignore=tests/test_recommendations.py
 ```
 
-The complete suite (`uv run --extra dev pytest`) also includes `test_recommendations.py`, which sends HTTP requests to a running backend at `http://localhost:8000`. Run that server with a disposable database when validating recommendation persistence.
+PostgreSQL integration tests are opt-in through `CAREERFLOW_TEST_POSTGRES`; they require an explicitly configured disposable database and must never target production. The complete suite also includes `test_recommendations.py`, which sends guest HTTP requests to a running backend at `http://localhost:8000` (overridable with `CAREERFLOW_TEST_API_URL`). Start a separate development backend before running these tests. The labeled recommendation cases are exploratory behavior checks, not a representative career-outcome benchmark.
 
 Frontend production build:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run build
 ```
 
@@ -647,8 +704,8 @@ This is usually a network interruption while downloading large Python wheels suc
 Retry:
 
 ```bash
-docker compose build --no-cache
-docker compose up
+docker compose -p careerflow-local --env-file frontend/.env build app
+docker compose -p careerflow-local --env-file frontend/.env up -d --no-build app
 ```
 
 ### `/recommend` returns `No module named 'catboost'`
@@ -659,17 +716,15 @@ Fix:
 
 ```powershell
 cd backend
-.\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+uv sync --locked --extra dev
+uv run --locked uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Or run Docker:
 
 ```bash
-docker compose --env-file frontend/.env build app
-docker compose --env-file frontend/.env run --rm --no-deps app alembic upgrade head
-docker compose --env-file frontend/.env up -d --no-build app
+docker compose -p careerflow-local --env-file frontend/.env build app
+docker compose -p careerflow-local --env-file frontend/.env up -d --no-build app
 ```
 
 ### Frontend cannot reach backend in local development
@@ -687,7 +742,7 @@ Restart `npm start`.
 Stop the old container:
 
 ```bash
-docker compose down
+docker compose -p careerflow-local --env-file frontend/.env down
 ```
 
 Or find the local process on Windows:
@@ -698,11 +753,11 @@ Get-NetTCPConnection -LocalPort 8000
 
 ### AI chat does not answer
 
-Open the AI assistant panel and save your Claude or Gemini API key for the current tab session. If a provider rejects it, check the key, permissions, and provider quota; the key is kept until you replace or remove it. BYOK ignores server environment keys. Alternatively, choose **Try with Gemini** for the limited server-managed preview when enabled. Other features continue to work without a key.
+Choose **Try with Gemini** for the enabled production preview, subject to the three-message allowance and shared daily budget. Alternatively, save your Claude or Gemini API key in the assistant for the current loaded application session. If a provider rejects it, check the key, permissions and provider quota; the key remains in memory until you replace/remove it or reload the page. BYOK ignores server environment keys. A local preview is disabled by default. Other features continue to work without an AI key.
 
 ### Database schema and legacy SQLite
 
-Apply versioned schema changes with `uv run alembic upgrade head`. Do not delete/reset a production database. Legacy SQLite is retained for private archival backup and rollback; shared anonymous data is never reassigned to newly registered users. See [deployment-v1.1.md](docs/deployment-v1.1.md) for backup, migration, rollback and account-deletion operations.
+Use the [checked development migration example](#safe-local-migrations) with a disposable Supabase project. `/ready` queries required tables and checks Auth configuration, but does not compare the Alembic revision; `/health` alone does not prove database readiness. Do not delete/reset a production database. Legacy SQLite is only an archival source, not v1.1 persistence or a substitute for PostgreSQL backups. Production schema changes require a verified target, backup and reviewed release procedure.
 
 ### PDF parser misses text
 
@@ -712,7 +767,7 @@ The parser works best with text-based PDFs. Image-only scanned resumes need OCR,
 
 ### Career Classification
 
-Best model: CatBoost on processed dataset.
+Recorded experiment: **CatBoost (processed dataset)** in [classification_report_fixed.csv](ml/classification/results/classification_report_fixed.csv).
 
 | Metric | Value |
 | --- | ---: |
@@ -720,9 +775,11 @@ Best model: CatBoost on processed dataset.
 | Macro F1 | 0.8094 |
 | Weighted F1 | 0.8413 |
 
+These are saved research results on the synthetic profile task, not a new audit run, end-to-end recommendation accuracy or a measure of career success. See the [classification methodology](ml/classification/README.md) and its notebooks for preparation, balancing and experiments. The CSV is the source for the values above.
+
 ### Demand Forecasting
 
-Best representative model: LightGBM with selected features.
+Recorded experiment: **LightGBM with linear features** in [regression_report.csv](<ml/demand prediction/results/regression_report.csv>).
 
 | Metric | Value |
 | --- | ---: |
@@ -730,36 +787,41 @@ Best representative model: LightGBM with selected features.
 | WAPE | 0.1120 |
 | R2 | 0.9442 |
 
+See the [demand research methodology](<ml/demand prediction/README.md>) for temporal validation, feature engineering, errors and the two-week moving-average baseline (reported WAPE about 0.1085). The saved LightGBM WAPE above does not establish an improvement over that baseline. These are historical experiment metrics, not a fresh evaluation of the current serving process or live-market forecasting quality.
+
 ## Datasets
 
 | Dataset | Purpose |
 | --- | --- |
-| `ml/classification/data/raw/career_multilabel_dataset.csv` | Initial student-profile data |
+| `ml/classification/data/raw/career_multilabel_dataset.csv` | Initial synthetic student-profile data |
 | `ml/classification/data/balanced/career_multilabel_dataset_balanced.csv` | Balanced classifier training data |
-| `backend/data/vacancy_data.csv` | Weekly vacancy-demand forecasting |
+| `backend/data/vacancy_data.csv` | Historical 2023 weekly vacancy-demand observations |
 | `backend/data/all_courses.csv` | Course recommendations with platform, difficulty, certificate and price metadata |
 
 ## Current Limitations
 
-- Self-service Supabase Auth deletion requires the server-only Supabase administrator key.
-- Guest state and abuse limits are process-local; use one worker/replica.
-- External OAuth redirects, Google Testing allow-list and infrastructure retention settings require owner review.
+- Self-service Supabase Auth deletion requires the server-only Supabase administrator key, which was not configured in the audited Azure runtime; do not assume the full deletion flow is available.
+- Guest state and basic request limits are process-local; use one worker/replica. Restart or scale-to-zero can end guest sessions before the two-hour TTL.
+- Production Google/GitHub login is maintainer-confirmed; development callback allow-lists, infrastructure retention and provider-log handling need separate configuration/review.
 - Course price values are numeric because the dataset does not include a currency column.
-- Resume parsing does not include OCR for scanned PDFs.
+- Resume parsing does not include OCR for scanned PDFs or dedicated DOCX support.
 - SHAP is attempted for the CatBoost classifier, but the code intentionally falls back to feature-importance/counterfactual explanations when SHAP is unavailable in the current runtime.
-- Demand forecasting uses packaged data and model artifacts, not a live vacancy feed.
+- Demand scoring fits LightGBM from packaged 2023 data and saved preprocessing/configuration; there is no live vacancy feed.
+- The classifier uses synthetic labels and only seven careers. Its saved classification metrics do not validate the final weighted ranking on real student outcomes.
 
-## Future Improvements
+## Future Directions
 
-- Add OCR for scanned resumes.
-- Add course currency/source normalization.
-- Connect demand forecasting to live vacancy data.
-- Add CI for backend tests and frontend build.
-- Add model registry and dataset versioning with MLflow or DVC.
+The [public roadmap](https://careerflow.live/roadmap) is the source of truth for publicly tracked work. The following directions describe priorities and possible development, not release commitments or completed features:
+
+- **CareerFlow v2.0:** frontend redesign and improved UX, selected by the maintainer as the next product priority; no release date is promised.
+- **Recommendation quality:** improve models, ranking and validation with more representative data, including broader career coverage where evidence supports it.
+- **Labor-market intelligence:** investigate fresher labor-market signals to reduce reliance on historical 2023 postings.
+- **Personalized learning:** explore more adaptive roadmaps, skill-gap prioritization and better course recommendations.
+- **Production reliability:** add monitoring and scalability improvements when usage justifies them, including shared temporary state and request limits before scaling beyond one replica.
 
 ## License
 
-This repository is intended for academic and portfolio demonstration purposes. Add an explicit license before public reuse or distribution.
+CareerFlow is a deployed public MVP operated as an **unincorporated project**, with research and portfolio origins. The repository currently has no project license file; public source availability does not grant an explicit open-source reuse license. No license is added or implied here. Dataset declarations in [Data and reviewer workflow](#data-and-reviewer-workflow) apply to their respective upstream sources and do not establish permission for all third-party data or assets. Clarify project and third-party rights before reuse or redistribution.
 
 ## Contact
 
